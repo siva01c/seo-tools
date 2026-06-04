@@ -441,10 +441,13 @@ The actor provides comprehensive data for each crawled page:
 ### Quick Start
 
 ```bash
-# Build the crawler image
+# 1. Create your .env from the template (required first step), then edit values as needed
+cp .env.example .env
+
+# 2. Build the crawler image
 docker compose build app
 
-# Crawl a site
+# 3. Crawl a site
 docker compose run --rm app npm run crawl -- https://example.com --headless=true
 
 # Crawl with exclusions and rate limiting
