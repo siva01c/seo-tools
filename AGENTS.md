@@ -431,11 +431,11 @@ docker compose run --rm app npx tsx scripts/report-seo-issues.ts --domain exampl
 docker compose run --rm app npx tsx scripts/report-404s.ts --domain example.com
 ```
 
-### Drupal.org with exclusions and rate limiting
+### Crawl with exclusions and rate limiting
 
 ```bash
-docker compose run --rm app npm run crawl -- https://drupal.org \
-  --exclude-domains "accounts.drupal.org" \
+docker compose run --rm app npm run crawl -- https://example.com \
+  --exclude-domains "accounts.example.com" \
   --rate-limit=conservative \
   --headless=false
 ```

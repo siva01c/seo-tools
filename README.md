@@ -117,8 +117,8 @@ docker compose run --rm app npm run crawl -- https://example.com --exclude-domai
 # Short version
 docker compose run --rm app npm run crawl -- https://example.com --exclude "api.example.com,static.example.com"
 
-# Example with drupal.org
-docker compose run --rm app npm run crawl -- https://drupal.org --exclude "accounts.drupal.org" --headless=false --rate-limit=conservative
+# Exclude a subdomain, visible browser, with rate limiting
+docker compose run --rm app npm run crawl -- https://example.com --exclude "accounts.example.com" --headless=false --rate-limit=conservative
 ```
 
 ### Path-Based Exclusions
@@ -585,8 +585,8 @@ docker compose run --rm app npm run crawl -- http://localhost:3000 --headless=fa
 # Single page analysis with visible browser
 docker compose run --rm app npm run crawl -- https://example.com --single --headless=false
 
-# Drupal example
-docker compose run --rm app npm run crawl -- http://www.drupal.org --headless=false --exclude-domains "accounts.drupal.org"
+# Visible browser with a domain exclusion
+docker compose run --rm app npm run crawl -- https://www.example.com --headless=false --exclude-domains "accounts.example.com"
 
 ```
 
@@ -707,11 +707,11 @@ Examples:
   docker compose run --rm app npm run crawl -- https://example.com --headless=false
   docker compose run --rm app npm run crawl -- https://example.com --rate-limit=moderate
   docker compose run --rm app npm run crawl -- https://example.com --rate-limit=200/3
-  docker compose run --rm app npm run crawl -- https://drupal.org --incremental --incremental-date 19-07-2025 --headless=false --rate-limit=conservative
+  docker compose run --rm app npm run crawl -- https://example.com --incremental --incremental-date 19-07-2025 --headless=false --rate-limit=conservative
   docker compose run --rm app npm run crawl -- https://example.com --headless=true --single --rate-limit=conservative
 
  Usage examples:
-  - docker compose run --rm app npm run crawl -- https://drupal.org --headless=false
+  - docker compose run --rm app npm run crawl -- https://example.com --headless=false
   - docker compose run --rm app npm run crawl -- https://example.com --single
   - docker compose run --rm app npm run crawl -- https://example.com --single --headless=false
 
