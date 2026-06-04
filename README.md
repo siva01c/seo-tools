@@ -406,6 +406,81 @@ The actor provides comprehensive data for each crawled page:
 }
 ```
 
+## 📊 Reports & Analysis
+
+After crawling a domain, generate analysis reports from the stored dataset. All reports read from
+`storage/datasets/<domain>/` and write to **`storage/reports/`** (JSON, with most also supporting
+`--csv`). Run any of them inside the `app` container.
+
+> Reports are generated from already-crawled data — crawl the site first (see Quick Start). The
+> active link/href checkers additionally make live HTTP requests.
+
+### SEO Audit — `seo-audit.ts`
+
+A comprehensive **Markdown** audit of a crawled site. Per page it checks indexability
+(`noindex`/non-200), missing `<title>`, overlong title (>63 chars), missing/overlong meta
+description (>163), missing canonical, missing Open Graph (`og:title`/`og:description`/`og:image`),
+missing `twitter:card`, absent JSON-LD structured data, thin content (<300 words), and orphan pages
+(no internal links). It also aggregates structured-data coverage, classifies page types (Homepage,
+Service, FAQ, Branch/Contact, …), and emits a prioritized recommendations table.
+
+```bash
+docker compose run --rm app npm run seo-audit -- --domain example.com
+# Options: --date DD-MM-YYYY (pick a crawl date), --output <file.md>
+# Output:  storage/reports/seo-audit-<domain>-<date>.md
+```
+
+### SEO Issues — `report-seo-issues.ts`
+
+Focused, machine-readable issue lists for bulk fixing. Flags **meta description** and **title**
+problems categorized as `missing` / `too_short` / `too_long` / `duplicate`, plus heading-structure
+and structured-data gaps.
+
+```bash
+docker compose run --rm app npm run report:seo-issues -- --domain example.com --csv
+# Options: --domain <d>, --output-dir <dir>, --csv
+# Output:  per-issue JSON (and CSV with --csv) in storage/reports/
+```
+
+### 404 Link Report — `report-404s.ts`
+
+Lists URLs that returned **HTTP 404** among the pages the crawler actually visited, grouped with
+their **referrers** (which page linked to them, the link text, and crawl date) and the discovery
+source (`linked_from_page` vs `seeded_or_sitemap`). Fast — it reads crawl results only and makes no
+new requests.
+
+```bash
+docker compose run --rm app npm run report:404 -- --domain example.com --csv
+# --domain is optional (processes all crawled domains if omitted)
+# Output:  storage/reports/<domain>/404-link-report-<date>.json (+ .csv with --csv)
+```
+
+### Broken Link Validation — `check-broken-links.ts`
+
+Unlike the 404 report, this **actively probes every referenced URL** — internal links, external
+links, and image `src`/`srcset`/`<picture>` sources — with a `HEAD` request (falling back to `GET`)
+and reports any 4xx/5xx or network failure, grouped by the page(s) referencing it.
+
+```bash
+docker compose run --rm app npx tsx scripts/check-broken-links.ts --domain example.com
+# Options: --concurrency 10, --timeout 20000, --skip-external, --status 403, --output <file.json>
+#   --status <code> narrows the report to that exact status (e.g. 403) and folds in crawled
+#   pages whose own response had that status but which nothing links to.
+# Output:  storage/reports/<domain>/<code>-report-<date>.json/.csv
+```
+
+### Empty / Missing href — `check-empty-href.ts`
+
+Scans each page's **raw HTML** for anchors with broken hrefs: `empty` (`href=""` → reloads the
+page), `missing` (no `href` → non-navigable), `hash` (`href="#"`), and `javascript:` pseudo-links.
+Requires HTML content extraction (`--html-content` at crawl time, or `extraction.modules.htmlContent: true`).
+
+```bash
+docker compose run --rm app npx tsx scripts/check-empty-href.ts --domain example.com
+# Options: --include hash,javascript (include review-only categories), --output <file.json>
+# Output:  storage/reports/<domain>/empty-href-<date>.json (+ .csv)
+```
+
 ## 🎯 Use Cases
 
 ### SEO Auditing
