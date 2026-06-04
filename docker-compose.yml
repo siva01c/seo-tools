@@ -1,0 +1,64 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: metadata-crawler-app
+    # Runs as root so the bind-mounted ./storage (owned by the host user) stays writable
+    # regardless of the host UID. The production image (Dockerfile final stage) runs as the
+    # non-root `seobot` user.
+    user: '0'
+    env_file:
+      - .env
+    environment:
+      APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
+    # To crawl a site served on the host (e.g. a local dev vhost) whose hostname resolves to
+    # 127.0.0.1, map that hostname to the host gateway so the container can reach it, e.g.:
+    #   extra_hosts:
+    #     - 'my-local-site.example:host-gateway'
+    volumes:
+      - ./storage:/home/seobot/storage
+    command: ['sleep', 'infinity']
+
+  typecheck:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    profiles: ['tools']
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/home/seobot/storage
+    command: npx tsc --noEmit
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: test
+    profiles: ['tools']
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/home/seobot/storage
+
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: builder
+    container_name: seo-crawler-mcp
+    env_file:
+      - .env
+    environment:
+      APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
+      MCP_PORT: '3001'
+    volumes:
+      - ./storage:/home/seobot/storage
+      - ./src:/app/src
+    ports:
+      - '3001:3001'
+    command: ['npx', 'tsx', 'src/mcp-server.ts']
+    restart: unless-stopped

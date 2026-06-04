@@ -1,0 +1,54 @@
+# Performance-Optimized Configuration
+# Fast crawling with minimal data extraction
+
+targets:
+  startUrls:
+    - 'https://large-website.com'
+  sitemapDiscovery: true
+
+crawler:
+  maxRequestsPerCrawl: 1000
+  maxConcurrency: 5 # Higher concurrency
+  requestTimeoutSecs: 30 # Shorter timeout
+  headless: true
+  requestDelay: 500 # Shorter delay
+
+extraction:
+  modules:
+    basicData: true
+    responseData: true
+    links: true
+    seoTags: true
+    specialLinks: false # Skip for performance
+    structuredData: false # Skip for performance
+    aiMetadata: false # Skip for performance
+    contentMetrics: false # Skip for performance
+    pageMap: false # Skip for performance
+
+  links:
+    extractAttributes: false # Skip expensive operations
+    categorizeByDomain: true
+
+output:
+  files:
+    scrapedData: 'fast-data.json'
+    sitemap: 'fast-sitemap.json'
+
+  formatting:
+    prettyPrint: false # Skip formatting for speed
+    includeTimestamp: false
+
+logging:
+  level: 'warn' # Minimal logging
+  enableConsole: true
+
+  events:
+    pageProcessed: false # Skip detailed logging
+    errorEncountered: true
+    sitemapDiscovered: false
+    linksCategorized: false
+
+performance:
+  skipHeavyExtraction: true
+  batchSize: 20
+  clearPageData: true

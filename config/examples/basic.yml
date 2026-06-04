@@ -1,0 +1,29 @@
+# Basic SEO Crawler Configuration
+# Simple configuration for basic website crawling
+
+targets:
+  startUrls:
+    - 'https://your-website.com'
+  sitemapDiscovery: true
+
+crawler:
+  maxRequestsPerCrawl: 50 # Limit for testing
+  maxConcurrency: 1 # Conservative concurrency
+  headless: true
+
+extraction:
+  modules:
+    basicData: true
+    responseData: true
+    links: true
+    seoTags: true
+    specialLinks: true
+    structuredData: false # Disable for basic crawling
+    aiMetadata: false # Disable for basic crawling
+    contentMetrics: false # Disable for basic crawling
+    pageMap: false # Disable for basic crawling
+
+output:
+  files:
+    scrapedData: 'basic-data.json'
+    sitemap: 'basic-sitemap.json'

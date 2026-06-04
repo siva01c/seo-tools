@@ -1,0 +1,214 @@
+# SEO Crawler Configuration
+# Main crawler settings and target configuration
+
+# Target URLs to crawl
+targets:
+  # ⚠️  Configure targets in .env (see .env.example) — env vars override these values
+  # CRAWLER_START_URLS=https://example.com
+  # CRAWLER_ALLOWED_DOMAINS=example.com,www.example.com
+  # CRAWLER_EXCLUDED_DOMAINS=api.example.com
+  # CRAWLER_EXCLUDED_PATHS=/wp-admin,/user/login
+  # CRAWLER_SITEMAP_DISCOVERY=true
+  startUrls: []
+  allowedDomains: []
+  excludedDomains: []
+  excludedPaths: []
+  sitemapDiscovery: true
+  # HTML sitemap URL (e.g. /sitemap.html) - leave empty to disable
+  # Use this when the site has an HTML sitemap instead of (or in addition to) an XML sitemap
+  htmlSitemapUrl: ''
+
+# Crawler behavior settings
+crawler:
+  # Maximum number of pages to crawl (0 = unlimited)
+  maxRequestsPerCrawl: 0
+
+  # Maximum concurrent requests (reduced for visible crawling)
+  maxConcurrency: 2
+
+  # Request timeout in seconds
+  requestTimeoutSecs: 30
+
+  # Show browser window (useful for debugging)
+  headless: false
+
+  # Delay between requests in milliseconds (will be randomized)
+  requestDelay: 20000
+
+  # Random delay range in milliseconds (3 to 15 seconds for visible crawling)
+  requestDelayMin: 3000
+  requestDelayMax: 9000
+
+  # Single URL mode - only crawl the specified URL, don't follow links
+  singleUrlMode: false
+
+  # Incremental crawling - only crawl new/modified content
+  incrementalMode: false
+  incrementalConfig:
+    # Previous crawl date (DD-MM-YYYY format) - leave empty for auto-detection
+    previousCrawlDate: ''
+
+    # Comparison mode for incremental crawling
+    mode: 'incremental' # incremental | new-only | modified-only | all
+
+    # Automatically detect the latest previous crawl
+    autoDetectPreviousCrawl: true
+
+    # Consider URLs older than this many days as potentially modified
+    maxAgeThresholdDays: 30
+
+  # Rate limiting configuration
+  rateLimiting:
+    enabled: false # Enable/disable rate limiting
+    persistData: true # Save request history across sessions
+
+    # Preset configurations (uncomment one):
+    # preset: "conservative"  # 100 requests per hour
+    # preset: "moderate"      # 200 requests per 2 hours
+    # preset: "aggressive"    # 500 requests per 3 hours
+    preset: 'bulk' # 1000 requests per 5 hours
+    # preset: "tiered"        # Multiple rules: 120/hour, 300/3h, 600/5h
+
+    # Custom rules (overrides preset if specified):
+    rules:
+      - windowHours: 1 # 1 hour window
+        maxRequests: 500 # Max 500 requests per hour
+        enabled: false
+        description: 'Hourly limit'
+
+      - windowHours: 3 # 3 hour window
+        maxRequests: 1000 # Max 1000 requests per 3 hours
+        enabled: false
+        description: '3-hour limit'
+
+      - windowHours: 5 # 5 hour window
+        maxRequests: 2000 # Max 2000 requests per 5 hours
+        enabled: false
+        description: '5-hour limit'
+
+  # Browser launch arguments
+  launchArgs:
+    headless:
+      - '--no-sandbox'
+      - '--disable-setuid-sandbox'
+      - '--disable-dev-shm-usage'
+      - '--disable-blink-features=AutomationControlled'
+      - '--disable-features=VizDisplayCompositor'
+      - '--disable-web-security'
+      - '--disable-features=TranslateUI'
+      - '--disable-ipc-flooding-protection'
+      - '--no-first-run'
+      - '--no-default-browser-check'
+      - '--disable-background-timer-throttling'
+      - '--disable-backgrounding-occluded-windows'
+      - '--disable-renderer-backgrounding'
+      - '--disable-extensions'
+      - '--disable-plugins'
+      - '--disable-default-apps'
+      - '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15'
+      - '--window-size=1920,1080'
+
+    visible:
+      - '--no-sandbox'
+      - '--disable-setuid-sandbox'
+      - '--disable-dev-shm-usage'
+      - '--disable-blink-features=AutomationControlled'
+      - '--no-first-run'
+      - '--no-default-browser-check'
+      - '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Safari/605.1.15'
+      - '--window-size=1920,1080'
+      - '--disable-web-security'
+
+# Data extraction settings
+extraction:
+  # Enable/disable different extraction modules
+  modules:
+    basicData: true # Title, URL, timestamp
+    responseData: true # HTTP status, headers
+    links: true # Internal/external links
+    seoTags: true # Google SEO meta tags
+    specialLinks: true # Canonical, hreflang, etc.
+    structuredData: true # JSON-LD, microdata
+    aiMetadata: true # Custom AI indexing metadata
+    contentMetrics: true # Word count, reading time
+    pageMap: true # PageMap data
+    htmlContent: true # Full HTML + main content HTML (opt-in: increases output size significantly)
+    images: true # Image metadata (src, alt, width, height, srcset, etc.)
+
+  # Link extraction settings
+  links:
+    extractAttributes: false # Skip expensive attributeStyleMap
+    categorizeByDomain: true # Separate internal/external
+
+  # Custom metadata fields to extract
+  customFields:
+    - 'department'
+    - 'category'
+    - 'tags'
+    - 'rating'
+    - 'difficulty'
+    - 'audience'
+    - 'priority'
+    - 'boost'
+
+# Output configuration
+output:
+  # File paths for different outputs
+  files:
+    scrapedData: 'scraped-data.json'
+    sitemap: 'sitemap.json'
+
+  # Crawlee storage settings (path is dynamically set based on domain)
+  storage:
+    enabled: true # Use Apify's default storage system
+    path: './storage'
+
+    # Real-time storage settings - save files during crawling
+    realTimeStorage:
+      enabled: true # Keep JSONL file for merging
+      saveIndividualFiles: false # Disable custom individual files
+      saveJsonl: true # Keep JSONL for multi-domain merging
+      jsonlFilename: 'crawl-data.jsonl' # Name of the continuous JSONL file
+
+  # Data formatting options
+  formatting:
+    prettyPrint: true
+    includeTimestamp: true
+
+# Logging configuration
+logging:
+  level: 'info' # debug, info, warn, error
+  enableConsole: true
+  enableFileLogging: true
+  logFile: 'crawler.log'
+  sessionLogs: true
+
+  # Log specific events
+  events:
+    pageProcessed: true
+    errorEncountered: true
+    sitemapDiscovered: true
+    linksCategorized: false
+
+# Error handling
+errorHandling:
+  # Continue crawling if individual page fails
+  continueOnError: true
+
+  # Retry failed requests (increase for 403 errors)
+  retryCount: 5
+  retryDelay: 10000 # milliseconds - longer delay for blocked requests
+
+  # Skip pages that take too long
+  skipOnTimeout: true
+
+# Performance optimization
+performance:
+  # Skip heavy operations for better speed
+  skipHeavyExtraction: false
+
+  # Batch size for parallel operations
+  batchSize: 5
+
+  # Memory management
+  clearPageData: true

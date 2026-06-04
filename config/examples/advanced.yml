@@ -1,0 +1,81 @@
+# Advanced SEO Crawler Configuration
+# Full-featured configuration for comprehensive analysis
+
+targets:
+  startUrls:
+    - 'https://example.com'
+    - 'https://blog.example.com'
+  allowedDomains:
+    - 'example.com'
+    - 'blog.example.com'
+  sitemapDiscovery: true
+
+crawler:
+  maxRequestsPerCrawl: 0 # Unlimited
+  maxConcurrency: 3
+  requestTimeoutSecs: 90
+  headless: true
+  requestDelay: 2000
+
+extraction:
+  modules:
+    basicData: true
+    responseData: true
+    links: true
+    seoTags: true
+    specialLinks: true
+    structuredData: true
+    aiMetadata: true
+    contentMetrics: true
+    pageMap: true
+
+  links:
+    extractAttributes: false
+    categorizeByDomain: true
+
+  customFields:
+    - 'department'
+    - 'category'
+    - 'tags'
+    - 'rating'
+    - 'difficulty'
+    - 'audience'
+    - 'priority'
+    - 'boost'
+    - 'content-type'
+    - 'last-modified'
+
+output:
+  files:
+    scrapedData: 'comprehensive-data.json'
+    sitemap: 'comprehensive-sitemap.json'
+
+  storage:
+    enabled: true
+    path: './storage/datasets/comprehensive'
+
+  formatting:
+    prettyPrint: true
+    includeTimestamp: true
+
+logging:
+  level: 'debug'
+  enableConsole: true
+  logFile: 'advanced-crawler.log'
+
+  events:
+    pageProcessed: true
+    errorEncountered: true
+    sitemapDiscovered: true
+    linksCategorized: true
+
+errorHandling:
+  continueOnError: true
+  retryCount: 5
+  retryDelay: 3000
+  skipOnTimeout: true
+
+performance:
+  skipHeavyExtraction: false
+  batchSize: 10
+  clearPageData: true

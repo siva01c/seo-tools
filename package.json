@@ -1,0 +1,61 @@
+{
+  "name": "metadata-crawler",
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Advanced web crawler for comprehensive SEO analysis, AI-powered content indexing, and metadata extraction.",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "apify": "^3.4.2",
+    "crawlee": "^3.0.0",
+    "dotenv": "^17.3.1",
+    "js-yaml": "^4.1.0",
+    "playwright": "^1.54.1"
+  },
+  "devDependencies": {
+    "@apify/tsconfig": "^0.1.0",
+    "@types/fs-extra": "^11.0.0",
+    "@types/jest": "^29.5.14",
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.36.0",
+    "@typescript-eslint/parser": "^8.36.0",
+    "eslint": "^9.31.0",
+    "eslint-config-prettier": "^10.1.5",
+    "eslint-plugin-prettier": "^5.5.1",
+    "husky": "^9.1.7",
+    "jest": "^29.7.0",
+    "lint-staged": "^16.1.2",
+    "prettier": "^3.6.2",
+    "ts-jest": "^29.4.0",
+    "tsx": "^4.21.0",
+    "typescript": "~5.8.0"
+  },
+  "scripts": {
+    "start": "npm run start:dev",
+    "start:prod": "node dist/main.js",
+    "start:dev": "tsx src/main.ts",
+    "crawl": "tsx src/main.ts",
+    "crawl:single": "tsx src/main.ts --single --url",
+    "merge-to-jsonl": "tsx scripts/merge-to-jsonl.ts",
+    "query-url-index": "tsx scripts/query-url-index.ts",
+    "merge:domains": "tsx scripts/merge-domains-jsonl.ts",
+    "report:404": "tsx scripts/report-404s.ts",
+    "report:seo-issues": "tsx scripts/report-seo-issues.ts",
+    "seo-audit": "tsx scripts/seo-audit.ts",
+    "build": "tsc",
+    "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
+    "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",
+    "lint": "eslint src/ scripts/ --ext .ts,.js",
+    "lint:fix": "eslint src/ scripts/ --ext .ts,.js --fix",
+    "format": "prettier --write \"src/**/*.{ts,js,json,yml,yaml,md}\" \"scripts/**/*.{ts,js,json,yml,yaml,md}\" \"*.{js,json,yml,yaml,md}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,js,json,yml,yaml,md}\" \"scripts/**/*.{ts,js,json,yml,yaml,md}\" \"*.{js,json,yml,yaml,md}\"",
+    "style": "npm run lint && npm run format:check",
+    "style:fix": "npm run lint:fix && npm run format",
+    "test:style": "npm run style",
+    "prepare": "husky install"
+  },
+  "author": "Ludek Kvapil <ludek.kvapil@macron.cz>",
+  "license": "MIT"
+}

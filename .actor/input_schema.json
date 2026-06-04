@@ -1,0 +1,183 @@
+{
+  "title": "SEO & GenAI Crawler Input",
+  "description": "Configuration for advanced SEO analysis and AI metadata extraction",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "startUrls": {
+      "title": "Start URLs",
+      "type": "array",
+      "description": "List of URLs where the crawling will start",
+      "prefill": [
+        {
+          "url": "https://example.com"
+        }
+      ],
+      "editor": "requestListSources"
+    },
+    "maxRequestsPerCrawl": {
+      "title": "Max pages to crawl",
+      "type": "integer",
+      "description": "Maximum number of pages to crawl (0 = unlimited)",
+      "minimum": 0,
+      "default": 100,
+      "maximum": 10000
+    },
+    "maxConcurrency": {
+      "title": "Max concurrency",
+      "type": "integer",
+      "description": "Maximum number of concurrent requests",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 2
+    },
+    "requestDelay": {
+      "title": "Request delay (ms)",
+      "type": "integer",
+      "description": "Delay between requests in milliseconds",
+      "minimum": 0,
+      "maximum": 10000,
+      "default": 1000
+    },
+    "sitemapDiscovery": {
+      "title": "Enable sitemap discovery",
+      "type": "boolean",
+      "description": "Automatically discover and crawl URLs from XML sitemaps",
+      "default": true
+    },
+    "extractionModules": {
+      "title": "Data extraction modules",
+      "type": "object",
+      "description": "Choose which data to extract from each page",
+      "editor": "json",
+      "prefill": {
+        "basicData": true,
+        "responseData": true,
+        "links": true,
+        "seoTags": true,
+        "specialLinks": true,
+        "structuredData": true,
+        "aiMetadata": true,
+        "contentMetrics": true,
+        "pageMap": true
+      },
+      "properties": {
+        "basicData": {
+          "title": "Basic data (title, URL, timestamp)",
+          "type": "boolean",
+          "default": true
+        },
+        "responseData": {
+          "title": "HTTP response data (status, headers)",
+          "type": "boolean",
+          "default": true
+        },
+        "links": {
+          "title": "Page links (internal/external)",
+          "type": "boolean",
+          "default": true
+        },
+        "seoTags": {
+          "title": "SEO meta tags",
+          "type": "boolean",
+          "default": true
+        },
+        "specialLinks": {
+          "title": "Special links (canonical, hreflang)",
+          "type": "boolean",
+          "default": true
+        },
+        "structuredData": {
+          "title": "Structured data (JSON-LD, microdata)",
+          "type": "boolean",
+          "default": true
+        },
+        "aiMetadata": {
+          "title": "AI metadata (custom fields)",
+          "type": "boolean",
+          "default": true
+        },
+        "contentMetrics": {
+          "title": "Content metrics (word count, reading time)",
+          "type": "boolean",
+          "default": true
+        },
+        "pageMap": {
+          "title": "PageMap data",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "customFields": {
+      "title": "Custom metadata fields",
+      "type": "array",
+      "description": "Additional meta tag names to extract",
+      "editor": "stringList",
+      "default": [
+        "department",
+        "category",
+        "tags",
+        "rating",
+        "difficulty",
+        "audience",
+        "priority",
+        "boost"
+      ]
+    },
+    "outputFormats": {
+      "title": "Output formats",
+      "type": "object",
+      "description": "Configure output formatting options",
+      "editor": "json",
+      "prefill": {
+        "prettyPrint": true,
+        "includeTimestamp": true
+      },
+      "properties": {
+        "prettyPrint": {
+          "title": "Pretty print JSON",
+          "type": "boolean",
+          "default": true
+        },
+        "includeTimestamp": {
+          "title": "Include timestamps",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "performance": {
+      "title": "Performance settings",
+      "type": "object",
+      "description": "Optimize crawler performance",
+      "editor": "json",
+      "prefill": {
+        "skipHeavyExtraction": false,
+        "requestTimeoutSecs": 60
+      },
+      "properties": {
+        "skipHeavyExtraction": {
+          "title": "Skip heavy operations",
+          "type": "boolean",
+          "description": "Disable expensive data extraction for better performance",
+          "default": false
+        },
+        "requestTimeoutSecs": {
+          "title": "Request timeout (seconds)",
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 300,
+          "default": 60
+        }
+      }
+    },
+    "debugMode": {
+      "title": "Debug mode",
+      "type": "boolean",
+      "description": "Enable detailed logging and browser window visibility",
+      "default": false
+    }
+  },
+  "required": ["startUrls"]
+}

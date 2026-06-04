@@ -1,0 +1,256 @@
+{
+  "title": "SEO & GenAI Crawler Results",
+  "description": "Comprehensive SEO and AI metadata extracted from web pages",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "title": {
+      "title": "Page Title",
+      "type": "string",
+      "description": "HTML title tag content"
+    },
+    "url": {
+      "title": "Page URL",
+      "type": "string",
+      "description": "Final URL after redirects",
+      "format": "uri"
+    },
+    "timestamp": {
+      "title": "Crawl Timestamp",
+      "type": "string",
+      "description": "When the page was crawled",
+      "format": "date-time"
+    },
+    "response": {
+      "title": "HTTP Response Data",
+      "type": "object",
+      "description": "HTTP response information",
+      "properties": {
+        "status": {
+          "title": "Status Code",
+          "type": "integer",
+          "description": "HTTP status code"
+        },
+        "statusText": {
+          "title": "Status Text",
+          "type": "string",
+          "description": "HTTP status message"
+        },
+        "headers": {
+          "title": "Response Headers",
+          "type": "object",
+          "description": "HTTP response headers"
+        },
+        "url": {
+          "title": "Response URL",
+          "type": "string",
+          "description": "Final response URL"
+        }
+      }
+    },
+    "links": {
+      "title": "Page Links",
+      "type": "object",
+      "description": "Links found on the page",
+      "properties": {
+        "internal": {
+          "title": "Internal Links",
+          "type": "array",
+          "description": "Links to same domain",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "description": "Link text"
+              },
+              "href": {
+                "type": "string",
+                "description": "Link URL"
+              },
+              "rel": {
+                "type": "string",
+                "description": "Link relationship"
+              },
+              "link_title": {
+                "type": "string",
+                "description": "Link title attribute"
+              },
+              "isInternal": {
+                "type": "boolean",
+                "description": "Whether link is internal"
+              }
+            }
+          }
+        },
+        "external": {
+          "title": "External Links",
+          "type": "array",
+          "description": "Links to external domains",
+          "items": {
+            "type": "object"
+          }
+        },
+        "total": {
+          "title": "Total Links",
+          "type": "integer",
+          "description": "Total number of links found"
+        }
+      }
+    },
+    "seo": {
+      "title": "SEO Data",
+      "type": "object",
+      "description": "SEO metadata and analysis",
+      "properties": {
+        "metaTags": {
+          "title": "Meta Tags",
+          "type": "object",
+          "description": "Google-supported meta tags",
+          "properties": {
+            "description": {
+              "type": "string",
+              "description": "Meta description"
+            },
+            "keywords": {
+              "type": "string",
+              "description": "Meta keywords"
+            },
+            "robots": {
+              "type": "string",
+              "description": "Robots directive"
+            },
+            "viewport": {
+              "type": "string",
+              "description": "Viewport setting"
+            },
+            "og:title": {
+              "type": "string",
+              "description": "Open Graph title"
+            },
+            "og:description": {
+              "type": "string",
+              "description": "Open Graph description"
+            },
+            "og:image": {
+              "type": "string",
+              "description": "Open Graph image"
+            },
+            "twitter:card": {
+              "type": "string",
+              "description": "Twitter card type"
+            }
+          }
+        },
+        "specialLinks": {
+          "title": "Special Links",
+          "type": "object",
+          "description": "SEO-important link elements",
+          "properties": {
+            "canonical": {
+              "type": "string",
+              "description": "Canonical URL"
+            },
+            "alternate": {
+              "type": "array",
+              "description": "Alternate language versions",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "href": {
+                    "type": "string"
+                  },
+                  "hreflang": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "hasDataNoSnippet": {
+          "title": "Has Data NoSnippet",
+          "type": "boolean",
+          "description": "Whether page has data-nosnippet attributes"
+        }
+      }
+    },
+    "aiMetadata": {
+      "title": "AI Metadata",
+      "type": "object",
+      "description": "AI-powered content analysis and metadata",
+      "properties": {
+        "structuredData": {
+          "title": "Structured Data",
+          "type": "object",
+          "description": "Schema.org and microdata",
+          "properties": {
+            "jsonLd": {
+              "type": "array",
+              "description": "JSON-LD structured data"
+            },
+            "microdata": {
+              "type": "array",
+              "description": "Microdata items"
+            }
+          }
+        },
+        "customMetadata": {
+          "title": "Custom Metadata",
+          "type": "object",
+          "description": "Custom fields and content metrics",
+          "properties": {
+            "department": {
+              "type": "string",
+              "description": "Content department"
+            },
+            "category": {
+              "type": "string",
+              "description": "Content category"
+            },
+            "tags": {
+              "type": "array",
+              "description": "Content tags",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rating": {
+              "type": "number",
+              "description": "Content rating"
+            },
+            "wordCount": {
+              "type": "integer",
+              "description": "Word count of page content"
+            },
+            "readingTime": {
+              "type": "string",
+              "description": "Estimated reading time"
+            },
+            "headingStructure": {
+              "type": "array",
+              "description": "Page heading hierarchy",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "level": {
+                    "type": "integer"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pageMap": {
+          "title": "PageMap Data",
+          "type": "object",
+          "description": "Custom search attributes"
+        }
+      }
+    }
+  },
+  "required": ["title", "url"]
+}

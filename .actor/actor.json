@@ -1,0 +1,24 @@
+{
+  "actorSpecification": 1,
+  "name": "seo-genai-crawler",
+  "version": "1.0",
+  "buildTag": "latest",
+  "dockerfile": "./Dockerfile",
+  "readme": "./README.md",
+  "input": "./.actor/input_schema.json",
+  "storages": {
+    "dataset": "./.actor/dataset_schema.json"
+  },
+  "environmentVariables": {
+    "DEBUG": "Enable debug logging",
+    "REQUEST_DELAY_MS": "Override request delay in milliseconds",
+    "MAX_CONCURRENCY": "Override maximum concurrency",
+    "SKIP_SITEMAP_DISCOVERY": "Skip automatic sitemap discovery (true/false)"
+  },
+  "minMemoryMbytes": 1024,
+  "maxMemoryMbytes": 4096,
+  "categories": ["SEO", "DEVELOPER_TOOLS", "BUSINESS"],
+  "title": "SEO & GenAI Crawler",
+  "description": "Advanced web crawler for comprehensive SEO analysis, AI-powered content indexing, and website visibility optimization. Extracts Google-supported meta tags, structured data, and AI indexing metadata.",
+  "shortDescription": "Comprehensive SEO crawler with AI metadata extraction for website analysis and optimization."
+}

@@ -1,0 +1,41 @@
+# Development files
+.idea
+.vscode
+.history
+*.log
+.git
+.gitignore
+
+# Dependencies
+node_modules
+
+# Build outputs (handled separately)
+dist
+
+# Runtime storage
+storage
+
+# Development and testing files  
+# src/tests
+# *.test.ts
+# *.test.js
+# jest.config.js
+# .jest
+
+# Development scripts (commented out - needed for utility functions)
+# scripts
+
+# Temporary files
+*.tmp
+*.temp
+.cache
+.env.local
+.env.*.local
+
+# Documentation (except README.md)
+docs
+CLAUDE.md
+
+# Generated files
+merged-data.jsonl
+*.tsbuildinfo

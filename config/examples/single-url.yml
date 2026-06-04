@@ -1,0 +1,120 @@
+# Single URL Crawler Configuration
+# Configuration for crawling only a single URL without following links
+
+# Target URLs to crawl
+targets:
+  startUrls:
+    - 'https://example.com'
+
+  # Domain filtering - if empty, uses first startUrl domain
+  allowedDomains: []
+
+  # Disable sitemap discovery for single URL mode
+  sitemapDiscovery: false
+
+# Crawler behavior settings
+crawler:
+  # Maximum number of pages to crawl (1 for single URL)
+  maxRequestsPerCrawl: 1
+
+  # Maximum concurrent requests
+  maxConcurrency: 1
+
+  # Request timeout in seconds
+  requestTimeoutSecs: 60
+
+  # Show browser window (useful for debugging)
+  headless: true
+
+  # No delay needed for single URL
+  requestDelay: 0
+
+  # No random delay for single URL
+  requestDelayMin: 0
+  requestDelayMax: 0
+
+  # Single URL mode - only crawl the specified URL, don't follow links
+  singleUrlMode: true
+
+# Data extraction settings
+extraction:
+  # Enable/disable different extraction modules
+  modules:
+    basicData: true # Title, URL, timestamp
+    responseData: true # HTTP status, headers
+    links: true # Internal/external links (for analysis only)
+    seoTags: true # Google SEO meta tags
+    specialLinks: true # Canonical, hreflang, etc.
+    structuredData: true # JSON-LD, microdata
+    aiMetadata: true # Custom AI indexing metadata
+    contentMetrics: true # Word count, reading time
+    pageMap: true # PageMap data
+
+  # Link extraction settings
+  links:
+    extractAttributes: false # Skip expensive attributeStyleMap
+    categorizeByDomain: true # Separate internal/external
+
+  # Custom metadata fields to extract
+  customFields:
+    - 'department'
+    - 'category'
+    - 'tags'
+    - 'rating'
+    - 'difficulty'
+    - 'audience'
+    - 'priority'
+    - 'boost'
+
+# Output configuration
+output:
+  # File paths for different outputs
+  files:
+    scrapedData: 'scraped-data.json'
+    sitemap: 'sitemap.json'
+
+  # Crawlee storage settings (path is dynamically set based on domain)
+  storage:
+    enabled: true
+    path: './storage'
+
+  # Data formatting options
+  formatting:
+    prettyPrint: true
+    includeTimestamp: true
+
+# Logging configuration
+logging:
+  level: 'info' # debug, info, warn, error
+  enableConsole: true
+  logFile: 'crawler.log'
+
+  # Log specific events
+  events:
+    pageProcessed: true
+    errorEncountered: true
+    sitemapDiscovered: false # Disabled for single URL mode
+    linksCategorized: true
+
+# Error handling
+errorHandling:
+  # Continue crawling if individual page fails
+  continueOnError: true
+
+  # Retry failed requests
+  retryCount: 3
+  retryDelay: 5000 # milliseconds
+
+  # Skip pages that take too long
+  skipOnTimeout: true
+
+# Performance optimization
+performance:
+  # Skip heavy operations for better speed
+  skipHeavyExtraction: false
+
+  # Batch size for parallel operations
+  batchSize: 1
+
+  # Memory management
+  clearPageData: true
