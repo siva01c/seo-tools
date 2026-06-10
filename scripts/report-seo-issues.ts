@@ -47,15 +47,10 @@ const csvFlag = args.some(a => a === '--csv');
 // ── Paths ────────────────────────────────────────────────────────────────────
 
 const storageRoot = './storage/datasets';
-const reportsRoot = outputDirArg ?? './storage/reports';
 
 if (!existsSync(storageRoot)) {
     console.error(`Storage root not found: ${storageRoot}`);
     process.exit(1);
-}
-
-if (!existsSync(reportsRoot)) {
-    mkdirSync(reportsRoot, { recursive: true });
 }
 
 const toDomainFile = (domain: string): string =>
@@ -67,6 +62,25 @@ const domainsToProcess = (() => {
 })();
 
 const dateStamp = new Date().toISOString().slice(0, 10);
+
+// Latest crawl date (DD-MM-YYYY) for a domain, taken from its dataset date folders.
+const getLatestDatasetDate = (domain: string): string => {
+    const dir = join(storageRoot, domain);
+    if (!existsSync(dir)) return dateStamp;
+    const dates = readdirSync(dir)
+        .filter(d => /^\d{2}-\d{2}-\d{4}$/.test(d))
+        .sort((a, b) => {
+            const iso = (d: string) => `${d.slice(6)}-${d.slice(3, 5)}-${d.slice(0, 2)}`;
+            return iso(a).localeCompare(iso(b));
+        });
+    return dates.length ? dates[dates.length - 1] : dateStamp;
+};
+
+// One folder per domain: storage/reports/<domain>/<date>/ — consistent with the other report
+// scripts. Aggregate runs (no --domain) collect under _all-domains/.
+const reportDate = domainArg ? getLatestDatasetDate(domainArg) : dateStamp;
+const reportsRoot = outputDirArg ?? join('./storage/reports', domainArg ?? '_all-domains', reportDate);
+mkdirSync(reportsRoot, { recursive: true });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

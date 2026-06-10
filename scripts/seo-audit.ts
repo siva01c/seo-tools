@@ -897,9 +897,12 @@ const main = (): void => {
         const markdown = renderMarkdown(domain, datesToLoad, pages, analyses, pdfPages);
 
         const dateLabel = dateArg ?? `all-${allDates.length}-crawls`;
-        const reportsDir = join('storage', 'reports');
+        // One folder per domain: storage/reports/<domain>/<date>/ (matches the other report
+        // scripts). allDates is sorted ascending, so the last entry is the latest crawl.
+        const folderDate = dateArg ?? allDates[allDates.length - 1];
+        const reportsDir = join('storage', 'reports', domain, folderDate);
         if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
-        const outputPath = outputArg ?? join(reportsDir, `seo-audit-${domain}-${dateLabel}.md`);
+        const outputPath = outputArg ?? join(reportsDir, `seo-audit-${dateLabel}.md`);
         writeFileSync(outputPath, markdown, 'utf-8');
 
         const criticalCount = analyses.filter(a =>
