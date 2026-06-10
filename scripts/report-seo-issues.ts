@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { messages, resolveLang, withSuffix } from './i18n.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,8 @@ const getArg = (name: string): string | undefined => {
 const domainArg = getArg('domain');
 const outputDirArg = getArg('output-dir');
 const csvFlag = args.some(a => a === '--csv');
+const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const mi = messages[lang].seoIssues;
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -79,7 +82,8 @@ const getLatestDatasetDate = (domain: string): string => {
 // One folder per domain: storage/reports/<domain>/<date>/ — consistent with the other report
 // scripts. Aggregate runs (no --domain) collect under _all-domains/.
 const reportDate = domainArg ? getLatestDatasetDate(domainArg) : dateStamp;
-const reportsRoot = outputDirArg ?? join('./storage/reports', domainArg ?? '_all-domains', reportDate);
+const reportsRoot =
+    outputDirArg ?? join('./storage/reports', domainArg ?? '_all-domains', reportDate);
 mkdirSync(reportsRoot, { recursive: true });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -87,13 +91,13 @@ mkdirSync(reportsRoot, { recursive: true });
 const csvEscape = (v: string | undefined): string => `"${(v ?? '').replace(/"/g, '""')}"`;
 
 const writeJson = (filename: string, data: unknown): void => {
-    const path = join(reportsRoot, filename);
+    const path = join(reportsRoot, withSuffix(filename, lang));
     writeFileSync(path, JSON.stringify(data, null, 2));
     console.log(`  ✅ ${path}`);
 };
 
 const writeCsv = (filename: string, rows: string[][]): void => {
-    const path = join(reportsRoot, filename);
+    const path = join(reportsRoot, withSuffix(filename, lang));
     writeFileSync(path, rows.map(r => r.map(csvEscape).join(',')).join('\n') + '\n');
     console.log(`  ✅ ${path} (CSV)`);
 };
@@ -219,7 +223,7 @@ writeJson(`meta-description-${dateStamp}.json`, {
 });
 
 if (csvFlag) {
-    const rows: string[][] = [['url', 'title', 'issue', 'value', 'length', 'duplicate_urls']];
+    const rows: string[][] = [mi.csvMetaDesc];
     for (const e of metaDescIssues) {
         rows.push([
             e.url,
@@ -287,7 +291,7 @@ for (const page of allPages) {
 writeJson(`title-issues-${dateStamp}.json`, { total: titleIssues.length, issues: titleIssues });
 
 if (csvFlag) {
-    const rows: string[][] = [['url', 'issue', 'value', 'length', 'duplicate_urls']];
+    const rows: string[][] = [mi.csvTitle];
     for (const e of titleIssues) {
         rows.push([
             e.url,
@@ -366,7 +370,7 @@ for (const page of allPages) {
 writeJson(`h1-issues-${dateStamp}.json`, { total: h1Issues.length, issues: h1Issues });
 
 if (csvFlag) {
-    const rows: string[][] = [['url', 'title', 'issue', 'h1_values', 'duplicate_urls']];
+    const rows: string[][] = [mi.csvH1];
     for (const e of h1Issues) {
         rows.push([
             e.url,
@@ -428,7 +432,7 @@ writeJson(`orphaned-pages-${dateStamp}.json`, {
 });
 
 if (csvFlag) {
-    const rows: string[][] = [['url', 'title', 'timestamp']];
+    const rows: string[][] = [mi.csvOrphan];
     for (const e of orphanedPages) {
         rows.push([e.url, e.title ?? '', e.timestamp ?? '']);
     }
@@ -477,7 +481,7 @@ writeJson(`jsonld-issues-${dateStamp}.json`, {
 });
 
 if (csvFlag) {
-    const rows: string[][] = [['url', 'title', 'issue', 'types_found']];
+    const rows: string[][] = [mi.csvJsonLd];
     for (const e of jsonLdIssues) {
         rows.push([e.url, e.title ?? '', e.issue, e.typesFound.join(' | ')]);
     }
@@ -486,10 +490,10 @@ if (csvFlag) {
 
 // ── Summary ───────────────────────────────────────────────────────────────────
 
-console.log('\n📊 Summary');
-console.log(`  Meta description issues : ${metaDescIssues.length}`);
-console.log(`  Title issues            : ${titleIssues.length}`);
-console.log(`  H1 issues               : ${h1Issues.length}`);
-console.log(`  Orphaned pages          : ${orphanedPages.length}`);
-console.log(`  JSON-LD issues          : ${jsonLdIssues.length}`);
-console.log(`\n  Reports written to: ${reportsRoot}`);
+console.log(`\n${mi.sumHeader}`);
+console.log(`  ${mi.sumMetaDesc}: ${metaDescIssues.length}`);
+console.log(`  ${mi.sumTitle}: ${titleIssues.length}`);
+console.log(`  ${mi.sumH1}: ${h1Issues.length}`);
+console.log(`  ${mi.sumOrphan}: ${orphanedPages.length}`);
+console.log(`  ${mi.sumJsonLd}: ${jsonLdIssues.length}`);
+console.log(`\n  ${mi.sumWritten}: ${reportsRoot}`);

@@ -409,11 +409,15 @@ The actor provides comprehensive data for each crawled page:
 ## 📊 Reports & Analysis
 
 After crawling a domain, generate analysis reports from the stored dataset. All reports read from
-`storage/datasets/<domain>/` and write to **`storage/reports/`** (JSON, with most also supporting
-`--csv`). Run any of them inside the `app` container.
+`storage/datasets/<domain>/` and write to **`storage/reports/<domain>/<date>/`** (JSON, with most
+also supporting `--csv`). Run any of them inside the `app` container.
 
 > Reports are generated from already-crawled data — crawl the site first (see Quick Start). The
 > active link/href checkers additionally make live HTTP requests.
+
+**Language:** every report accepts `--language <code>` — empty/absent = English (default), `cs` =
+Czech. Czech output is written to a separate `…-cs.{md,json,csv}` file so both languages can coexist.
+Example: `… npm run seo-audit -- --domain example.com --language cs`.
 
 ### SEO Audit — `seo-audit.ts`
 

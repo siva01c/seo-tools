@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { messages, resolveLang, langSuffix } from './i18n.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -226,35 +227,22 @@ function analyzePage(page: IPageRecord): IPageAnalysis {
         (page.fullText ? page.fullText.split(/\s+/).filter(Boolean).length : 0);
     const internalLinkCount = page.links?.internal?.length ?? 0;
 
-    if (!isIndexable)
-        issues.push({
-            severity: 'critical',
-            message: 'Page is not indexable (noindex or non-200)',
-        });
-    if (!title) issues.push({ severity: 'critical', message: 'Missing <title> tag' });
+    if (!isIndexable) issues.push({ severity: 'critical', message: m.issNotIndexable });
+    if (!title) issues.push({ severity: 'critical', message: m.issNoTitle });
     else if (titleLength > 63)
-        issues.push({
-            severity: 'warning',
-            message: `Title too long (${titleLength} chars, max 63)`,
-        });
-    if (!description) issues.push({ severity: 'critical', message: 'Missing meta description' });
+        issues.push({ severity: 'warning', message: m.issTitleLong(titleLength) });
+    if (!description) issues.push({ severity: 'critical', message: m.issNoDesc });
     else if (descriptionLength > 163)
-        issues.push({
-            severity: 'warning',
-            message: `Description too long (${descriptionLength} chars, max 163)`,
-        });
-    if (!canonical) issues.push({ severity: 'warning', message: 'No canonical URL defined' });
-    if (!meta['og:title']) issues.push({ severity: 'warning', message: 'Missing og:title' });
-    if (!meta['og:description'])
-        issues.push({ severity: 'warning', message: 'Missing og:description' });
-    if (!meta['og:image']) issues.push({ severity: 'info', message: 'Missing og:image' });
-    if (!meta['twitter:card']) issues.push({ severity: 'info', message: 'Missing twitter:card' });
-    if (jsonLdTypes.length === 0)
-        issues.push({ severity: 'warning', message: 'No JSON-LD structured data' });
+        issues.push({ severity: 'warning', message: m.issDescLong(descriptionLength) });
+    if (!canonical) issues.push({ severity: 'warning', message: m.issNoCanonical });
+    if (!meta['og:title']) issues.push({ severity: 'warning', message: m.issNoOgTitle });
+    if (!meta['og:description']) issues.push({ severity: 'warning', message: m.issNoOgDesc });
+    if (!meta['og:image']) issues.push({ severity: 'info', message: m.issNoOgImage });
+    if (!meta['twitter:card']) issues.push({ severity: 'info', message: m.issNoTwitter });
+    if (jsonLdTypes.length === 0) issues.push({ severity: 'warning', message: m.issNoJsonLd });
     if (wordCount < 300 && wordCount > 0)
-        issues.push({ severity: 'warning', message: `Thin content (${wordCount} words, min 300)` });
-    if (internalLinkCount === 0)
-        issues.push({ severity: 'warning', message: 'No internal links (orphan page risk)' });
+        issues.push({ severity: 'warning', message: m.issThin(wordCount) });
+    if (internalLinkCount === 0) issues.push({ severity: 'warning', message: m.issNoInternal });
 
     return {
         url: page.url,
@@ -359,95 +347,73 @@ function renderMarkdown(
         body: string
     ) => {
         todos.push(
-            `### [SEO-${String(taskId++).padStart(3, '0')}] ${title}\n\n**Priority:** ${priority} | **Impact:** ${impact} | **Effort:** ${effort}\n\n${body}`
+            `### [SEO-${String(taskId++).padStart(3, '0')}] ${title}\n\n**${m.thRoadmap[1]}:** ${priority} | **${m.thRoadmap[2]}:** ${impact} | **${m.thRoadmap[3]}:** ${effort}\n\n${body}`
         );
     };
+    const affected = (
+        filter: (a: IPageAnalysis) => boolean,
+        label?: (a: IPageAnalysis) => string
+    ): string =>
+        `**${m.todoAffectedPages}**\n${analyses
+            .filter(filter)
+            .map(a => (label ? label(a) : `- ${a.url}`))
+            .join('\n')}`;
 
     if (missingSchema > 0) {
         task(
-            `Add JSON-LD structured data to ${missingSchema} pages without schema`,
-            'High',
-            'High',
-            'Medium',
-            `**Affected pages:**\n${analyses
-                .filter(a => a.jsonLdTypes.length === 0)
-                .map(a => `- ${a.url}`)
-                .join('\n')}`
+            m.todoAddSchema(missingSchema),
+            m.levHigh,
+            m.levHigh,
+            m.levMedium,
+            affected(a => a.jsonLdTypes.length === 0)
         );
     }
     if (!allJsonLdTypes.includes('Organization')) {
-        task(
-            'Add global Organization schema to all pages',
-            'High',
-            'High',
-            'Low',
-            'Add `Organization` JSON-LD to the global site `<head>`. Include: `name`, `url`, `logo`, `contactPoint`, `sameAs`.'
-        );
+        task(m.todoAddOrg, m.levHigh, m.levHigh, m.levLow, m.todoAddOrgBody);
     }
     if (!allJsonLdTypes.includes('WebSite')) {
-        task(
-            'Add WebSite schema with SearchAction',
-            'Medium',
-            'Medium',
-            'Low',
-            'Add `WebSite` JSON-LD globally. Include `SearchAction` if site search is available.'
-        );
+        task(m.todoAddWebsite, m.levMedium, m.levMedium, m.levLow, m.todoAddWebsiteBody);
     }
     if (!allJsonLdTypes.includes('BreadcrumbList')) {
-        task(
-            'Add BreadcrumbList schema sitewide',
-            'Medium',
-            'Medium',
-            'Low',
-            'Generate breadcrumb schema from navigation hierarchy on all non-homepage pages.'
-        );
+        task(m.todoAddBreadcrumb, m.levMedium, m.levMedium, m.levLow, m.todoAddBreadcrumbBody);
     }
     if (missingDesc > 0) {
         task(
-            `Write meta descriptions for ${missingDesc} pages`,
-            'High',
-            'High',
-            'Low',
-            `Keep descriptions 120–163 characters.\n\n**Affected pages:**\n${analyses
-                .filter(a => !a.hasDescription)
-                .map(a => `- ${a.url}`)
-                .join('\n')}`
+            m.todoWriteDesc(missingDesc),
+            m.levHigh,
+            m.levHigh,
+            m.levLow,
+            `${m.todoWriteDescBody}\n\n${affected(a => !a.hasDescription)}`
         );
     }
     if (noCanonical > 0) {
         task(
-            `Add canonical URL tags to ${noCanonical} pages`,
-            'Medium',
-            'Medium',
-            'Low',
-            `**Affected pages:**\n${analyses
-                .filter(a => !a.hasCanonical)
-                .map(a => `- ${a.url}`)
-                .join('\n')}`
+            m.todoAddCanonical(noCanonical),
+            m.levMedium,
+            m.levMedium,
+            m.levLow,
+            affected(a => !a.hasCanonical)
         );
     }
     if (orphans > 0) {
         task(
-            `Fix ${orphans} orphan pages with no internal links`,
-            'Medium',
-            'Medium',
-            'Medium',
-            `Link these pages from relevant hub/index pages.\n\n**Affected pages:**\n${analyses
-                .filter(a => a.internalLinkCount === 0)
-                .map(a => `- ${a.url}`)
-                .join('\n')}`
+            m.todoFixOrphans(orphans),
+            m.levMedium,
+            m.levMedium,
+            m.levMedium,
+            `${m.todoFixOrphansBody}\n\n${affected(a => a.internalLinkCount === 0)}`
         );
     }
     if (thinContent > 0) {
         task(
-            `Enrich thin-content pages (< 300 words) — ${thinContent} pages`,
-            'Medium',
-            'High',
-            'High',
-            `Add explicit service definitions, scope, audience, and FAQ sections.\n\n**Affected pages:**\n${analyses
-                .filter(a => a.wordCount > 0 && a.wordCount < 300)
-                .map(a => `- ${a.url} (${a.wordCount} words)`)
-                .join('\n')}`
+            m.todoEnrichThin(thinContent),
+            m.levMedium,
+            m.levHigh,
+            m.levHigh,
+            `${m.todoEnrichThinBody}\n\n${affected(
+                a => a.wordCount > 0 && a.wordCount < 300,
+                a => `- ${a.url} (${a.wordCount} ${m.todoWordsSuffix})`
+            )}`
         );
     }
     if (
@@ -455,115 +421,104 @@ function renderMarkdown(
             a => a.pageType === 'Branch/Contact' && !a.jsonLdTypes.includes('LocalBusiness')
         ).length > 0
     ) {
-        task(
-            'Add LocalBusiness schema to branch/contact pages',
-            'High',
-            'High',
-            'Medium',
-            'Required fields: `name`, `address` (PostalAddress), `geo`, `telephone`, `openingHours`, `parentOrganization`.'
-        );
+        task(m.todoAddLocalBiz, m.levHigh, m.levHigh, m.levMedium, m.todoAddLocalBizBody);
     }
     task(
-        'Validate all JSON-LD via Google Rich Results Test',
-        'High',
-        'High',
-        'Low',
-        `**Tool:** https://search.google.com/test/rich-results\n\n**Priority pages to check:**\n${analyses
+        m.todoValidate,
+        m.levHigh,
+        m.levHigh,
+        m.levLow,
+        `${m.todoValidateBody}\n${analyses
             .filter(a => a.jsonLdTypes.length > 0)
             .slice(0, 10)
             .map(a => `- ${a.url}`)
             .join('\n')}`
     );
-    task(
-        'Verify canonical/sitemap consistency',
-        'High',
-        'Medium',
-        'Low',
-        'Confirm all canonical URLs are included in sitemap.xml. Check for canonical loops and mismatches.'
-    );
+    task(m.todoVerifyCanonical, m.levHigh, m.levMedium, m.levLow, m.todoVerifyCanonicalBody);
 
     // ── Build report ─────────────────────────────────────────────────────────
 
-    return `# SEO Audit Report — ${domain}
+    return `# ${m.reportTitle} — ${domain}
 
-**Crawl dates analyzed:** ${dates.join(', ')}
-**Generated:** ${new Date().toISOString().slice(0, 10)}
-**Unique pages analyzed:** ${total}
+**${m.metaCrawlDates}:** ${dates.join(', ')}
+**${m.metaGenerated}:** ${new Date().toISOString().slice(0, 10)}
+**${m.metaUniquePages}:** ${total}
 
 ---
 
-## 1. Executive Summary
+## 1. ${m.sExecSummary}
 
-| Metric | Count | Coverage |
+| ${m.thSummary[0]} | ${m.thSummary[1]} | ${m.thSummary[2]} |
 |--------|-------|----------|
-| Unique pages analyzed | ${total} | 100% |
-| 🔴 Pages with critical issues | ${criticalCount} | ${pct(criticalCount, total)} |
-| Missing meta description | ${missingDesc} | ${pct(missingDesc, total)} |
-| Missing JSON-LD schema | ${missingSchema} | ${pct(missingSchema, total)} |
-| No canonical URL | ${noCanonical} | ${pct(noCanonical, total)} |
-| Orphan pages (0 internal links) | ${orphans} | ${pct(orphans, total)} |
-| Not indexable | ${notIndexable} | ${pct(notIndexable, total)} |
-| Thin content (< 300 words) | ${thinContent} | ${pct(thinContent, total)} |
+| ${m.rowUniquePages} | ${total} | 100% |
+| ${m.rowCritical} | ${criticalCount} | ${pct(criticalCount, total)} |
+| ${m.rowMissingDesc} | ${missingDesc} | ${pct(missingDesc, total)} |
+| ${m.rowMissingSchema} | ${missingSchema} | ${pct(missingSchema, total)} |
+| ${m.rowNoCanonical} | ${noCanonical} | ${pct(noCanonical, total)} |
+| ${m.rowOrphans} | ${orphans} | ${pct(orphans, total)} |
+| ${m.rowNotIndexable} | ${notIndexable} | ${pct(notIndexable, total)} |
+| ${m.rowThin} | ${thinContent} | ${pct(thinContent, total)} |
 
-### Key findings
+### ${m.hKeyFindings}
 
-${missingSchema > 0 ? `- ⚠️ **${missingSchema} pages** have no JSON-LD — machine readability is severely limited` : '- ✅ All pages have some JSON-LD structured data'}
-${!allJsonLdTypes.includes('Organization') ? '- 🔴 **No Organization schema** — AI systems and search engines cannot reliably identify the business entity' : '- ✅ Organization entity defined'}
-${missingDesc > 0 ? `- ⚠️ **${missingDesc} pages** missing meta descriptions — poor CTR in search results` : '- ✅ All pages have meta descriptions'}
-${noCanonical > 0 ? `- ⚠️ **${noCanonical} pages** lack canonical tags — duplicate content risk` : '- ✅ All pages have canonical tags'}
-${orphans > 0 ? `- ⚠️ **${orphans} pages** have zero internal links — invisible to crawlers` : '- ✅ No orphan pages detected'}
-${notIndexable > 0 ? `- 🔴 **${notIndexable} pages** not indexable — verify robots meta and HTTP status` : '- ✅ All pages are indexable'}
+${missingSchema > 0 ? m.fNoJsonLd(missingSchema) : m.fAllJsonLd}
+${!allJsonLdTypes.includes('Organization') ? m.fNoOrg : m.fOrgDefined}
+${missingDesc > 0 ? m.fMissingDesc(missingDesc) : m.fAllDesc}
+${noCanonical > 0 ? m.fNoCanonical(noCanonical) : m.fAllCanonical}
+${orphans > 0 ? m.fOrphans(orphans) : m.fNoOrphans}
+${notIndexable > 0 ? m.fNotIndexable(notIndexable) : m.fAllIndexable}
 
 ---
 
-## 2. Scope
+## 2. ${m.sScope}
 
-- **Domain:** ${domain}
-- **Crawl dates included:** ${dates.join(', ')}
-- **Deduplication:** latest crawl date per URL used when same page appears in multiple dates
-- **Total unique pages analyzed:** ${total}
-- **Page types found:**
+- **${m.lblDomain}:** ${domain}
+- **${m.lblCrawlDatesIncluded}:** ${dates.join(', ')}
+- **${m.lblDedup}**
+- **${m.lblTotalPages}:** ${total}
+- **${m.lblPageTypesFound}:**
 ${Object.entries(pageTypeCounts)
-    .map(([type, count]) => `  - ${type}: ${count}`)
+    .map(([type, count]) => `  - ${m.pageType[type] ?? type}: ${count}`)
     .join('\n')}
 
 ---
 
-## 3. Page Type Inventory
+## 3. ${m.sPageTypeInventory}
 
-| URL | Type | Indexable | Canonical | Schema Types | Issues |
+| ${m.thPageType[0]} | ${m.thPageType[1]} | ${m.thPageType[2]} | ${m.thPageType[3]} | ${m.thPageType[4]} | ${m.thPageType[5]} |
 |-----|------|-----------|-----------|--------------|--------|
 ${analyses
     .map(a => {
         const crits = a.issues.filter(i => i.severity === 'critical').length;
         const warns = a.issues.filter(i => i.severity === 'warning').length;
-        const issueStr = crits > 0 ? `🔴 ${crits} critical` : warns > 0 ? `🟡 ${warns} warn` : '✅';
+        const issueStr =
+            crits > 0 ? m.issueCellCritical(crits) : warns > 0 ? m.issueCellWarn(warns) : '✅';
         const shortUrl = a.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 55) || '/';
         const schemas = a.jsonLdTypes.slice(0, 3).join(', ') || '—';
-        return `| \`${shortUrl}\` | ${a.pageType} | ${a.isIndexable ? '✅' : '🔴'} | ${a.hasCanonical ? '✅' : '🟡'} | ${schemas} | ${issueStr} |`;
+        return `| \`${shortUrl}\` | ${m.pageType[a.pageType] ?? a.pageType} | ${a.isIndexable ? '✅' : '🔴'} | ${a.hasCanonical ? '✅' : '🟡'} | ${schemas} | ${issueStr} |`;
     })
     .join('\n')}
 
 ---
 
-## 4. Structured Data Inventory
+## 4. ${m.sStructuredData}
 
-### Schema types found across site
+### ${m.hSchemaTypesFound}
 
 ${
     allJsonLdTypes.length > 0
         ? allJsonLdTypes
               .map(
                   t =>
-                      `- **${t}** — ${analyses.filter(a => a.jsonLdTypes.includes(t)).length} pages`
+                      `- **${t}** — ${analyses.filter(a => a.jsonLdTypes.includes(t)).length} ${m.pagesWord}`
               )
               .join('\n')
-        : '⚠️ No JSON-LD structured data found on any page'
+        : m.noJsonLdAnyPage
 }
 
-### Coverage by page type
+### ${m.hCoverageByType}
 
-| Page Type | Pages | Has Schema | Schema Types | Missing |
+| ${m.thCoverage[0]} | ${m.thCoverage[1]} | ${m.thCoverage[2]} | ${m.thCoverage[3]} | ${m.thCoverage[4]} |
 |-----------|-------|------------|--------------|---------|
 ${Object.entries(pageTypeCounts)
     .map(([type, count]) => {
@@ -580,54 +535,50 @@ ${Object.entries(pageTypeCounts)
                     : type === 'FAQ' && !schemaTypes.includes('FAQPage')
                       ? 'FAQPage'
                       : '—';
-        return `| ${type} | ${count} | ${withSchema}/${count} | ${schemaTypes || '—'} | ${missing} |`;
+        return `| ${m.pageType[type] ?? type} | ${count} | ${withSchema}/${count} | ${schemaTypes || '—'} | ${missing} |`;
     })
     .join('\n')}
 
 ---
 
-## 5. Technical SEO Review
+## 5. ${m.sTechnicalSeo}
 
-### Meta tag coverage
+### ${m.hMetaTagCoverage}
 
-| Check | Pass | Fail | Coverage |
+| ${m.thMetaCheck[0]} | ${m.thMetaCheck[1]} | ${m.thMetaCheck[2]} | ${m.thMetaCheck[3]} |
 |-------|------|------|----------|
-| Title present | ${analyses.filter(a => !!a.title).length} | ${analyses.filter(a => !a.title).length} | ${pct(analyses.filter(a => !!a.title).length, total)} |
-| Title ≤ 63 chars | ${analyses.filter(a => a.titleLength <= 63 && !!a.title).length} | ${analyses.filter(a => a.titleLength > 63).length} | ${pct(analyses.filter(a => a.titleLength <= 63 && !!a.title).length, total)} |
-| Meta description | ${analyses.filter(a => a.hasDescription).length} | ${missingDesc} | ${pct(analyses.filter(a => a.hasDescription).length, total)} |
-| Description ≤ 163 chars | ${analyses.filter(a => a.descriptionLength <= 163 && a.hasDescription).length} | ${analyses.filter(a => a.descriptionLength > 163).length} | ${pct(analyses.filter(a => a.descriptionLength <= 163 && a.hasDescription).length, total)} |
-| Canonical tag | ${analyses.filter(a => a.hasCanonical).length} | ${noCanonical} | ${pct(analyses.filter(a => a.hasCanonical).length, total)} |
+| ${m.mcTitlePresent} | ${analyses.filter(a => !!a.title).length} | ${analyses.filter(a => !a.title).length} | ${pct(analyses.filter(a => !!a.title).length, total)} |
+| ${m.mcTitleLen} | ${analyses.filter(a => a.titleLength <= 63 && !!a.title).length} | ${analyses.filter(a => a.titleLength > 63).length} | ${pct(analyses.filter(a => a.titleLength <= 63 && !!a.title).length, total)} |
+| ${m.mcMetaDesc} | ${analyses.filter(a => a.hasDescription).length} | ${missingDesc} | ${pct(analyses.filter(a => a.hasDescription).length, total)} |
+| ${m.mcDescLen} | ${analyses.filter(a => a.descriptionLength <= 163 && a.hasDescription).length} | ${analyses.filter(a => a.descriptionLength > 163).length} | ${pct(analyses.filter(a => a.descriptionLength <= 163 && a.hasDescription).length, total)} |
+| ${m.mcCanonical} | ${analyses.filter(a => a.hasCanonical).length} | ${noCanonical} | ${pct(analyses.filter(a => a.hasCanonical).length, total)} |
 | og:title | ${analyses.filter(a => a.hasOgTitle).length} | ${analyses.filter(a => !a.hasOgTitle).length} | ${pct(analyses.filter(a => a.hasOgTitle).length, total)} |
 | og:description | ${analyses.filter(a => a.hasOgDescription).length} | ${analyses.filter(a => !a.hasOgDescription).length} | ${pct(analyses.filter(a => a.hasOgDescription).length, total)} |
 | og:image | ${analyses.filter(a => a.hasOgImage).length} | ${analyses.filter(a => !a.hasOgImage).length} | ${pct(analyses.filter(a => a.hasOgImage).length, total)} |
 | twitter:card | ${analyses.filter(a => a.hasTwitterCard).length} | ${analyses.filter(a => !a.hasTwitterCard).length} | ${pct(analyses.filter(a => a.hasTwitterCard).length, total)} |
-| Hreflang | ${analyses.filter(a => a.hasHreflang).length} | ${analyses.filter(a => !a.hasHreflang).length} | ${pct(analyses.filter(a => a.hasHreflang).length, total)} |
+| ${m.mcHreflang} | ${analyses.filter(a => a.hasHreflang).length} | ${analyses.filter(a => !a.hasHreflang).length} | ${pct(analyses.filter(a => a.hasHreflang).length, total)} |
 
 ---
 
-## 6. Entity Model Analysis
+## 6. ${m.sEntityModel}
 
-### Entities detected
+### ${m.hEntitiesDetected}
 
-${
-    allJsonLdTypes.length > 0
-        ? allJsonLdTypes.map(t => `- **${t}**`).join('\n')
-        : '⚠️ No structured entities found'
-}
+${allJsonLdTypes.length > 0 ? allJsonLdTypes.map(t => `- **${t}**`).join('\n') : m.eNoEntities}
 
-### Entity relationship assessment
+### ${m.hEntityRelationship}
 
-${allJsonLdTypes.includes('Organization') ? '✅ **Organization** entity defined' : '🔴 **Organization** missing — AI systems cannot identify the business'}
-${allJsonLdTypes.includes('WebSite') ? '✅ **WebSite** schema present' : '⚠️ **WebSite** missing — add WebSite with SearchAction'}
-${allJsonLdTypes.includes('BreadcrumbList') ? '✅ **BreadcrumbList** present — site hierarchy defined' : '⚠️ **BreadcrumbList** missing — no hierarchy signal for search engines'}
-${allJsonLdTypes.includes('LocalBusiness') ? '✅ **LocalBusiness** found — local SEO supported' : '⚠️ **LocalBusiness** missing — critical for local discoverability'}
-${allJsonLdTypes.some(t => ['Article', 'BlogPosting'].includes(t)) ? `✅ **Article/BlogPosting** found on ${analyses.filter(a => a.pageType === 'Article').length} pages` : ''}
+${allJsonLdTypes.includes('Organization') ? m.eOrgYes : m.eOrgNo}
+${allJsonLdTypes.includes('WebSite') ? m.eWebsiteYes : m.eWebsiteNo}
+${allJsonLdTypes.includes('BreadcrumbList') ? m.eBreadcrumbYes : m.eBreadcrumbNo}
+${allJsonLdTypes.includes('LocalBusiness') ? m.eLocalBizYes : m.eLocalBizNo}
+${allJsonLdTypes.some(t => ['Article', 'BlogPosting'].includes(t)) ? m.eArticleYes(analyses.filter(a => a.pageType === 'Article').length) : ''}
 
 ---
 
-## 7. Gap Analysis
+## 7. ${m.sGapAnalysis}
 
-### Missing schemas by page type
+### ${m.hMissingSchemasByType}
 
 ${Object.entries(pageTypeCounts)
     .map(([type]) => {
@@ -635,58 +586,53 @@ ${Object.entries(pageTypeCounts)
         const schemaTypes = [...new Set(ta.flatMap(a => a.jsonLdTypes))];
         const gaps: string[] = [];
         if (type === 'Homepage') {
-            if (!schemaTypes.includes('Organization'))
-                gaps.push('`Organization` — defines the business entity globally');
-            if (!schemaTypes.includes('WebSite'))
-                gaps.push('`WebSite` — enables sitelinks search box');
-            if (!schemaTypes.includes('BreadcrumbList'))
-                gaps.push('`BreadcrumbList` — hierarchy signal');
+            if (!schemaTypes.includes('Organization')) gaps.push(m.gapOrganization);
+            if (!schemaTypes.includes('WebSite')) gaps.push(m.gapWebsite);
+            if (!schemaTypes.includes('BreadcrumbList')) gaps.push(m.gapBreadcrumb);
         }
         if (type === 'Article') {
             if (!schemaTypes.some(t => ['Article', 'BlogPosting', 'NewsArticle'].includes(t)))
-                gaps.push('`Article`/`BlogPosting` — required for Google rich results');
+                gaps.push(m.gapArticle);
         }
         if (type === 'Branch/Contact') {
-            if (!schemaTypes.includes('LocalBusiness'))
-                gaps.push('`LocalBusiness` — critical for Google Maps and local SEO');
+            if (!schemaTypes.includes('LocalBusiness')) gaps.push(m.gapLocalBusiness);
         }
         if (type === 'Service') {
-            if (!schemaTypes.includes('Service'))
-                gaps.push('`Service` — improves entity clarity for AI systems');
+            if (!schemaTypes.includes('Service')) gaps.push(m.gapService);
         }
         if (type === 'FAQ') {
-            if (!schemaTypes.includes('FAQPage')) gaps.push('`FAQPage` — enables FAQ rich results');
+            if (!schemaTypes.includes('FAQPage')) gaps.push(m.gapFaq);
         }
+        const label = m.pageType[type] ?? type;
         return gaps.length > 0
-            ? `**${type}:**\n${gaps.map(g => `- Missing: ${g}`).join('\n')}`
-            : `**${type}:** ✅ Expected schemas present`;
+            ? `**${label}:**\n${gaps.map(g => `- ${m.gapMissing}: ${g}`).join('\n')}`
+            : `**${label}:** ${m.gapExpectedPresent}`;
     })
     .join('\n\n')}
 
-### Missing meta tags summary
+### ${m.hMissingMetaSummary}
 
 ${
-    [
-        ['Meta description', analyses.filter(a => !a.hasDescription)],
-        ['og:title', analyses.filter(a => !a.hasOgTitle)],
-        ['og:description', analyses.filter(a => !a.hasOgDescription)],
-        ['og:image', analyses.filter(a => !a.hasOgImage)],
-        ['twitter:card', analyses.filter(a => !a.hasTwitterCard)],
-        ['Canonical', analyses.filter(a => !a.hasCanonical)],
-    ]
-        .filter(([, pages]) => (pages as IPageAnalysis[]).length > 0)
-        .map(
-            ([tag, pages]) =>
-                `- **${tag}**: missing on ${(pages as IPageAnalysis[]).length} pages (${pct((pages as IPageAnalysis[]).length, total)})`
-        )
-        .join('\n') || '✅ No missing critical meta tags'
+    (
+        [
+            [m.mcMetaDesc, analyses.filter(a => !a.hasDescription)],
+            ['og:title', analyses.filter(a => !a.hasOgTitle)],
+            ['og:description', analyses.filter(a => !a.hasOgDescription)],
+            ['og:image', analyses.filter(a => !a.hasOgImage)],
+            ['twitter:card', analyses.filter(a => !a.hasTwitterCard)],
+            [m.mcCanonical, analyses.filter(a => !a.hasCanonical)],
+        ] as [string, IPageAnalysis[]][]
+    )
+        .filter(([, pages]) => pages.length > 0)
+        .map(([tag, pages]) => m.missingMetaLine(tag, pages.length, pct(pages.length, total)))
+        .join('\n') || m.noMissingMeta
 }
 
 ---
 
-## 8. Content & AI Readability Review
+## 8. ${m.sContentAi}
 
-### Word count distribution
+### ${m.hWordCountDist}
 
 ${(() => {
     const bins: Record<string, number> = {
@@ -704,45 +650,45 @@ ${(() => {
         else bins['1000+']++;
     }
     return Object.entries(bins)
-        .map(([range, count]) => `- **${range} words**: ${count} pages`)
+        .map(([range, count]) => m.wordBinLine(range, count))
         .join('\n');
 })()}
 
-### Thin content pages (< 300 words)
+### ${m.hThinContent}
 
 ${
     analyses.filter(a => a.wordCount > 0 && a.wordCount < 300).length === 0
-        ? '✅ No thin content pages detected'
+        ? m.noThin
         : analyses
               .filter(a => a.wordCount > 0 && a.wordCount < 300)
-              .map(a => `- ${a.url} — **${a.wordCount} words**`)
+              .map(a => m.thinLine(a.url, a.wordCount))
               .join('\n')
 }
 
-### AI answerability checklist
+### ${m.hAiChecklist}
 
-- ${allJsonLdTypes.includes('Organization') ? '✅' : '❌'} Business identity clear (Organization schema)
-- ${allJsonLdTypes.includes('WebSite') ? '✅' : '⚠️'} Website entity defined
-- ${analyses.filter(a => a.pageType === 'Service' && a.jsonLdTypes.includes('Service')).length > 0 ? '✅' : '⚠️'} Services machine-readable (Service schema)
-- ${allJsonLdTypes.includes('LocalBusiness') ? '✅' : '⚠️'} Location data structured (LocalBusiness schema)
-- ${analyses.filter(a => a.wordCount >= 300).length >= total * 0.7 ? '✅' : '⚠️'} Content depth adequate (≥300 words on 70%+ of pages)
+- ${allJsonLdTypes.includes('Organization') ? '✅' : '❌'} ${m.aiBizIdentity}
+- ${allJsonLdTypes.includes('WebSite') ? '✅' : '⚠️'} ${m.aiWebsiteEntity}
+- ${analyses.filter(a => a.pageType === 'Service' && a.jsonLdTypes.includes('Service')).length > 0 ? '✅' : '⚠️'} ${m.aiServices}
+- ${allJsonLdTypes.includes('LocalBusiness') ? '✅' : '⚠️'} ${m.aiLocation}
+- ${analyses.filter(a => a.wordCount >= 300).length >= total * 0.7 ? '✅' : '⚠️'} ${m.aiContentDepth}
 
 ---
 
-## 9. Internal Linking Review
+## 9. ${m.sInternalLinking}
 
-| Metric | Value |
+| ${m.thLinking[0]} | ${m.thLinking[1]} |
 |--------|-------|
-| Average internal links / page | ${(analyses.reduce((s, a) => s + a.internalLinkCount, 0) / total).toFixed(1)} |
-| Orphan pages (0 internal links) | ${orphans} |
-| Max internal links on one page | ${Math.max(...analyses.map(a => a.internalLinkCount))} |
-| Min (excluding orphans) | ${Math.min(...analyses.filter(a => a.internalLinkCount > 0).map(a => a.internalLinkCount), Infinity) || 0} |
+| ${m.ilAvg} | ${(analyses.reduce((s, a) => s + a.internalLinkCount, 0) / total).toFixed(1)} |
+| ${m.ilOrphans} | ${orphans} |
+| ${m.ilMax} | ${Math.max(...analyses.map(a => a.internalLinkCount))} |
+| ${m.ilMin} | ${Math.min(...analyses.filter(a => a.internalLinkCount > 0).map(a => a.internalLinkCount), Infinity) || 0} |
 
-### Orphan pages
+### ${m.hOrphanPages}
 
 ${
     orphans === 0
-        ? '✅ No orphan pages'
+        ? m.noOrphanPages
         : analyses
               .filter(a => a.internalLinkCount === 0)
               .map(a => `- ${a.url}`)
@@ -751,31 +697,31 @@ ${
 
 ---
 
-## 10. Broken Links
+## 10. ${m.sBrokenLinks}
 
 ${
     brokenLinks.length === 0
-        ? '✅ No broken links detected (all crawled pages returned HTTP 200)'
-        : `Found **${brokenLinks.length} broken link(s)** — pages with non-200 HTTP status that are still linked from other pages.\n\n${brokenLinks
+        ? m.blNone
+        : `${m.blFound(brokenLinks.length)}\n\n${brokenLinks
               .map(b => {
                   const linkedFrom =
                       b.foundOn.length > 0
-                          ? b.foundOn.map(src => `  - linked from: [${src}](${src})`).join('\n')
-                          : '  - source page unknown (not linked from any crawled page)';
-                  return `### 🔴 \`${b.targetUrl}\`\n- **HTTP status:** ${b.status}\n- **Linked from ${b.foundOn.length} page(s):**\n${linkedFrom}`;
+                          ? b.foundOn.map(src => m.blLinkedFrom(src)).join('\n')
+                          : m.blSourceUnknown;
+                  return `### 🔴 \`${b.targetUrl}\`\n- **${m.blHttpStatus}:** ${b.status}\n- **${m.blLinkedFromCount(b.foundOn.length)}**\n${linkedFrom}`;
               })
               .join('\n\n')}`
 }
 
 ---
 
-## 11. Validation Plan
+## 11. ${m.sValidationPlan}
 
-- **Google Rich Results Test:** https://search.google.com/test/rich-results
-- **Schema.org Validator:** https://validator.schema.org/
-- **Google Search Console** → URL Inspection for rendering checks
+- ${m.vpRichResults}
+- ${m.vpSchemaValidator}
+- ${m.vpSearchConsole}
 
-### Priority pages to validate
+### ${m.hPriorityPages}
 
 ${analyses
     .filter(a => a.jsonLdTypes.length > 0)
@@ -783,51 +729,51 @@ ${analyses
     .map(a => `- [${a.url}](${a.url}) — ${a.jsonLdTypes.join(', ')}`)
     .join('\n')}
 
-### Technical checklist
+### ${m.hTechChecklist}
 
-- [ ] Canonical URLs match sitemap entries
-- [ ] No duplicate schema blocks (e.g., multiple Organization definitions)
-- [ ] robots.txt does not block key page templates
-- [ ] JSON-LD renders correctly in page source (not JS-only)
+- [ ] ${m.chkCanonicalSitemap}
+- [ ] ${m.chkNoDupSchema}
+- [ ] ${m.chkRobots}
+- [ ] ${m.chkJsonLdRenders}
 
 ---
 
-## 12. Prioritized Implementation Roadmap
+## 12. ${m.sRoadmap}
 
-| Task | Priority | Impact | Effort |
+| ${m.thRoadmap[0]} | ${m.thRoadmap[1]} | ${m.thRoadmap[2]} | ${m.thRoadmap[3]} |
 |------|----------|--------|--------|
-${missingSchema > 0 ? `| Add JSON-LD to ${missingSchema} pages without schema | High | High | Medium |` : ''}
-${!allJsonLdTypes.includes('Organization') ? '| Add global Organization schema | High | High | Low |' : ''}
-${!allJsonLdTypes.includes('WebSite') ? '| Add WebSite + SearchAction schema | Medium | Medium | Low |' : ''}
-${!allJsonLdTypes.includes('BreadcrumbList') ? '| Add BreadcrumbList sitewide | Medium | Medium | Low |' : ''}
-${missingDesc > 0 ? `| Write meta descriptions for ${missingDesc} pages | High | High | Low |` : ''}
-${noCanonical > 0 ? `| Add canonical tags to ${noCanonical} pages | Medium | Medium | Low |` : ''}
-${orphans > 0 ? `| Fix ${orphans} orphan pages | Medium | Medium | Medium |` : ''}
-${thinContent > 0 ? `| Enrich ${thinContent} thin-content pages | Medium | High | High |` : ''}
-${analyses.filter(a => a.pageType === 'Branch/Contact' && !a.jsonLdTypes.includes('LocalBusiness')).length > 0 ? '| Add LocalBusiness to branch/contact pages | High | High | Medium |' : ''}
-${brokenLinks.length > 0 ? `| Fix ${brokenLinks.length} broken links (non-200 pages) | High | High | Medium |` : ''}
-| Validate all JSON-LD (Rich Results Test) | High | High | Low |
-| Verify canonical/sitemap consistency | High | Medium | Low |
+${missingSchema > 0 ? `| ${m.todoAddSchema(missingSchema)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
+${!allJsonLdTypes.includes('Organization') ? `| ${m.todoAddOrg} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |` : ''}
+${!allJsonLdTypes.includes('WebSite') ? `| ${m.todoAddWebsite} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
+${!allJsonLdTypes.includes('BreadcrumbList') ? `| ${m.todoAddBreadcrumb} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
+${missingDesc > 0 ? `| ${m.todoWriteDesc(missingDesc)} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |` : ''}
+${noCanonical > 0 ? `| ${m.todoAddCanonical(noCanonical)} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
+${orphans > 0 ? `| ${m.todoFixOrphans(orphans)} | ${m.levMedium} | ${m.levMedium} | ${m.levMedium} |` : ''}
+${thinContent > 0 ? `| ${m.todoEnrichThin(thinContent)} | ${m.levMedium} | ${m.levHigh} | ${m.levHigh} |` : ''}
+${analyses.filter(a => a.pageType === 'Branch/Contact' && !a.jsonLdTypes.includes('LocalBusiness')).length > 0 ? `| ${m.todoAddLocalBiz} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
+${brokenLinks.length > 0 ? `| ${m.roadmapFixBroken(brokenLinks.length)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
+| ${m.todoValidate} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |
+| ${m.todoVerifyCanonical} | ${m.levHigh} | ${m.levMedium} | ${m.levLow} |
 
 ---
 
-## 13. Developer TODO Backlog
+## 13. ${m.sTodoBacklog}
 
 ${todos.join('\n\n---\n\n')}
 
 ---
 
-## PDF Files
+## ${m.sPdfFiles}
 
 ${
     pdfPages.length === 0
-        ? '_No PDF files detected._'
-        : `Found **${pdfPages.length} PDF file(s)**:\n\n| URL | Status |\n|-----|--------|\n${pdfPages.map(p => `| [${p.url}](${p.url}) | ${p.response?.status ?? '—'} |`).join('\n')}`
+        ? m.noPdf
+        : `${m.pdfFound(pdfPages.length)}\n\n| ${m.thPdf[0]} | ${m.thPdf[1]} |\n|-----|--------|\n${pdfPages.map(p => `| [${p.url}](${p.url}) | ${p.response?.status ?? '—'} |`).join('\n')}`
 }
 
 ---
 
-## Full Issue List Per Page
+## ${m.sFullIssueList}
 
 ${analyses
     .filter(a => a.issues.length > 0)
@@ -839,7 +785,7 @@ ${analyses
 
 ---
 
-*Generated by metadata-crawler SEO audit script — https://github.com/your-org/metadata-crawler*
+${m.footer}
 `;
 }
 
@@ -857,6 +803,9 @@ const args = process.argv.slice(2);
 const domain = getArg(args, 'domain');
 const dateArg = getArg(args, 'date');
 const outputArg = getArg(args, 'output');
+const lang = resolveLang(getArg(args, 'language') ?? getArg(args, 'lang'));
+// Translated message bundle for this run; analyzePage/renderMarkdown close over it.
+const m = messages[lang].seoAudit;
 
 const main = (): void => {
     if (!domain) {
@@ -902,7 +851,8 @@ const main = (): void => {
         const folderDate = dateArg ?? allDates[allDates.length - 1];
         const reportsDir = join('storage', 'reports', domain, folderDate);
         if (!existsSync(reportsDir)) mkdirSync(reportsDir, { recursive: true });
-        const outputPath = outputArg ?? join(reportsDir, `seo-audit-${dateLabel}.md`);
+        const outputPath =
+            outputArg ?? join(reportsDir, `seo-audit-${dateLabel}${langSuffix(lang)}.md`);
         writeFileSync(outputPath, markdown, 'utf-8');
 
         const criticalCount = analyses.filter(a =>

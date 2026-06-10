@@ -2,6 +2,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
+import { messages, resolveLang, langSuffix } from './i18n.js';
 
 type Link = { href?: string; text?: string };
 type Page = {
@@ -41,6 +42,8 @@ const getArg = (name: string): string | undefined => {
 const domainArg = getArg('domain'); // optional; if omitted processes all domains
 const outputArg = getArg('output'); // optional custom output file
 const csvFlag = args.some(a => a === '--csv'); // presence enables CSV output
+const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const m4 = messages[lang].report404;
 
 const storageRoot = './storage/datasets';
 const reportsRoot = './storage/reports';
@@ -129,10 +132,11 @@ for (const domain of domainsToProcess) {
     const reportDir = outputArg ? undefined : getReportDir(domain, pages);
     const pageCrawlDate = getLatestCrawlDate(pages);
     const dateStamp = pageCrawlDate ? toDatasetDate(pageCrawlDate) : getLatestDatasetDate(domain);
-    const defaultOutput = outputArg ?? join(reportDir!, `404-link-report-${dateStamp}.json`);
+    const defaultOutput =
+        outputArg ?? join(reportDir!, `404-link-report-${dateStamp}${langSuffix(lang)}.json`);
     const defaultCsv = outputArg
         ? outputArg.replace(/\.json$/, '.csv')
-        : join(reportDir!, `404-link-report-${dateStamp}.csv`);
+        : join(reportDir!, `404-link-report-${dateStamp}${langSuffix(lang)}.csv`);
     const domainEntries: ReportEntry[] = [];
 
     if (reportDir) {
@@ -176,18 +180,7 @@ for (const domain of domainsToProcess) {
     console.log(`✅ Wrote JSON report: ${defaultOutput} (${domainEntries.length} entries)`);
 
     if (csvFlag) {
-        const rows = [
-            [
-                'target',
-                'status',
-                'timestamp',
-                'discovery_source',
-                'ref_page',
-                'ref_title',
-                'link_text',
-                'crawl_date',
-            ].join(','),
-        ];
+        const rows = [m4.csvHeader.join(',')];
         for (const entry of domainEntries) {
             if (entry.referrers.length === 0) {
                 rows.push(
