@@ -49,7 +49,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: builder
-    container_name: seo-crawler-mcp
+    container_name: seo-tools-mcp
     env_file:
       - .env
     environment:

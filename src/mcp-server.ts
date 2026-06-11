@@ -1,5 +1,5 @@
 /**
- * MCP HTTP server for seo-crawler.
+ * MCP HTTP server for seo-tools.
  * Exposes crawl, get_report, and list_reports as JSON-RPC 2.0 tools.
  * Auth: Authorization: Basic <base64(SEO_MCP_TOKEN)>
  */
@@ -194,7 +194,7 @@ function dispatch(method: string, params: Record<string, unknown>, id: unknown) 
             result: {
                 protocolVersion: '2024-11-05',
                 capabilities: { tools: {} },
-                serverInfo: { name: 'seo-crawler-mcp', version: '1.0.0' },
+                serverInfo: { name: 'seo-tools-mcp', version: '1.0.0' },
             },
         };
     }
