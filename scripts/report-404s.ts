@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, langSuffix } from './i18n.js';
+import { dedupePagesByUrl } from './page-records.js';
 
 type Link = { href?: string; text?: string };
 type Page = {
@@ -124,11 +125,15 @@ for (const domain of domainsToProcess) {
     }
 
     console.log(`🔍 Processing ${filePath}`);
-    const pages: Page[] = readFileSync(filePath, 'utf8')
-        .trim()
-        .split('\n')
-        .filter(Boolean)
-        .map(line => JSON.parse(line));
+    // Latest crawl of each URL only — a page that 404ed once but is fixed in a
+    // newer crawl must not be reported from the stale record.
+    const pages: Page[] = dedupePagesByUrl(
+        readFileSync(filePath, 'utf8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map(line => JSON.parse(line) as Page)
+    );
     const reportDir = outputArg ? undefined : getReportDir(domain, pages);
     const pageCrawlDate = getLatestCrawlDate(pages);
     const dateStamp = pageCrawlDate ? toDatasetDate(pageCrawlDate) : getLatestDatasetDate(domain);

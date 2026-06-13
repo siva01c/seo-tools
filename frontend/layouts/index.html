@@ -1,0 +1,437 @@
+{{ define "main" }}
+<!-- Navigation -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top" id="sideNav">
+    <a class="navbar-brand js-scroll-trigger" href="#page-top">
+        <span class="d-block d-lg-none">seo-tools</span>
+        <span class="d-none d-lg-block">
+            <span class="text-white h3 d-block mb-3">🦔 seo-tools</span>
+            <span class="text-white-50 small d-block">SEO Audit Zdarma</span>
+        </span>
+    </a>
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarResponsive" aria-controls="navbarResponsive" aria-expanded="false" aria-label="Toggle navigation">
+        <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navbarResponsive">
+        <ul class="navbar-nav">
+            <li class="nav-item"><a class="nav-link js-scroll-trigger" href="#audit">Spustit Audit</a></li>
+            <li class="nav-item"><a class="nav-link js-scroll-trigger" href="#pricing">Ceník</a></li>
+            <li class="nav-item"><a class="nav-link js-scroll-trigger" href="#about">Jak to funguje</a></li>
+            <li class="nav-item"><a class="nav-link js-scroll-trigger" href="#contact">Kontakt</a></li>
+            <li class="nav-item mt-4"><hr class="text-white-50"></li>
+            <li class="nav-item">
+                <a class="btn btn-outline-light btn-sm w-100" id="login-btn" onclick="toggleAuth()">Přihlásit se</a>
+                <div id="user-profile" class="text-white-50 small mt-2 d-none">
+                    <i class="fas fa-user me-2"></i><span id="user-email"></span><br>
+                    <span class="badge bg-success mt-1" id="user-tier">Free Tier</span>
+                </div>
+            </li>
+        </ul>
+    </div>
+</nav>
+
+<!-- Content Wrapper -->
+<div id="content-wrapper">
+    <!-- Audit Section -->
+    <section class="seo-section" id="audit">
+        <div class="container-fluid p-0">
+            <div class="row">
+                <div class="col-lg-10">
+                    <h1 class="mb-2">SEO <span class="text-primary">Audit</span></h1>
+                    <div class="subheading mb-5">
+                        Zadejte doménu a získejte okamžitou SEO & AI-readiness analýzu zdarma.
+                    </div>
+                    
+                    <!-- Form Panel -->
+                    <div id="form-panel" class="card-premium">
+                        <form id="audit-form">
+                            <div class="mb-4">
+                                <label for="url-input" class="form-label fw-bold">Webová stránka k analýze</label>
+                                <input type="url" class="form-control form-control-premium" id="url-input" placeholder="https://example.com" required>
+                                <div class="form-text text-muted">Zadejte celou URL adresu začínající na http:// nebo https://</div>
+                            </div>
+                            <div class="mb-4">
+                                <label for="email-input" class="form-label fw-bold">Váš Email</label>
+                                <input type="email" class="form-control form-control-premium" id="email-input" placeholder="jmeno@firma.cz" required>
+                                <div class="form-text text-muted">Na tento email vám zašleme hotový report.</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-lg px-5 py-3 fw-bold">
+                                Spustit analýzu webu
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Progress Panel (Hidden by default) -->
+                    <div id="progress-panel" class="card-premium d-none">
+                        <div class="d-flex align-items-center mb-4">
+                            <div class="spinner-border spinner-premium me-3" role="status">
+                                <span class="visually-hidden">Načítání...</span>
+                            </div>
+                            <div>
+                                <h3 class="mb-0" id="progress-status">Crawl & analýza probíhá...</h3>
+                                <div class="text-muted small">Crawl velkých webů může trvat i několik minut, prosím nezavírejte tuto stránku.</div>
+                            </div>
+                        </div>
+                        <div class="progress-premium">
+                            <div id="progress-bar" class="progress-bar-premium" style="width: 15%"></div>
+                        </div>
+                        <div class="fw-bold mb-2">Průběh zprávy (reálné logy):</div>
+                        <div id="log-console" class="console-box">
+                            <div class="log-line info">Inicializace crawleru...</div>
+                        </div>
+                    </div>
+
+                    <!-- Report Viewer Panel (Hidden by default) -->
+                    <div id="report-panel" class="card-premium d-none">
+                        <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
+                            <h2 class="mb-0">Dokončený SEO Audit</h2>
+                            <div>
+                                <button onclick="window.print()" class="btn btn-outline-secondary me-2">
+                                    <i class="fas fa-print me-2"></i>Tisknout
+                                </button>
+                                <button onclick="resetForm()" class="btn btn-primary">
+                                    Nový audit
+                                </button>
+                            </div>
+                        </div>
+                        <div id="report-target" class="report-content">
+                            <!-- Report HTML gets injected here -->
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Pricing Section -->
+    <section class="seo-section" id="pricing">
+        <div class="container-fluid p-0">
+            <h2 class="mb-2">Plány & <span class="text-primary">Ceník</span></h2>
+            <div class="subheading mb-5">Vyberte si předplatné podle velikosti vašeho projektu nebo agentury.</div>
+            <div class="row g-4 col-lg-10">
+                <!-- Solo Tier -->
+                <div class="col-md-6">
+                    <div class="card-premium h-100">
+                        <div class="badge bg-secondary mb-2">Solo</div>
+                        <h3>Solo Předplatné</h3>
+                        <div class="display-5 fw-bold text-primary my-3">490 Kč<span class="fs-6 text-muted"> / měsíc</span></div>
+                        <ul class="list-unstyled mb-4">
+                            <li><i class="fas fa-check text-success me-2"></i>Až 3 registrované domény</li>
+                            <li><i class="fas fa-check text-success me-2"></i>Limit 500 stránek na crawl</li>
+                            <li><i class="fas fa-check text-success me-2"></i>10 auditů měsíčně</li>
+                            <li><i class="fas fa-check text-success me-2"></i>1 vybraný jazyk reportu</li>
+                        </ul>
+                        <button onclick="startCheckout('Solo', 490)" class="btn btn-primary w-100 fw-bold py-2">Vybrat Solo</button>
+                    </div>
+                </div>
+                <!-- Agency Tier -->
+                <div class="col-md-6">
+                    <div class="card-premium h-100 border border-primary">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <div class="badge bg-primary">Agency</div>
+                            <div class="badge bg-warning text-dark small fw-bold">Doporučeno</div>
+                        </div>
+                        <h3>Agency & White-label</h3>
+                        <div class="display-5 fw-bold text-primary my-3">1 990 Kč<span class="fs-6 text-muted"> / měsíc</span></div>
+                        <ul class="list-unstyled mb-4">
+                            <li><i class="fas fa-check text-success me-2"></i>Až 25 registrovaných domén</li>
+                            <li><i class="fas fa-check text-success me-2"></i>Limit 5 000 stránek na crawl</li>
+                            <li><i class="fas fa-check text-success me-2"></i>50 auditů měsíčně</li>
+                            <li><i class="fas fa-check text-success me-2"></i>Bilingvální reporty (CS + EN)</li>
+                            <li><i class="fas fa-check text-success me-2"></i>Vlastní logo & White-label</li>
+                            <li><i class="fas fa-check text-success me-2"></i>Přístup k API & MCP Gateway</li>
+                        </ul>
+                        <button onclick="startCheckout('Agency', 1990)" class="btn btn-warning text-dark w-100 fw-bold py-2">Vybrat Agency</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stripe Checkout Overlay (Hidden by default) -->
+    <div id="stripe-checkout" class="d-none position-fixed top-0 start-0 w-100 h-100 bg-dark bg-opacity-75 d-flex align-items-center justify-content-center" style="z-index: 2000;">
+        <div class="card p-4 bg-white shadow-lg border-0" style="max-width: 500px; width: 100%; border-radius: 12px;">
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-3 mb-3">
+                <h5 class="mb-0 text-dark"><i class="fab fa-stripe text-primary me-2"></i>Stripe Checkout</h5>
+                <button type="button" onclick="closeCheckout()" class="btn-close"></button>
+            </div>
+            <div class="mb-3 text-dark">
+                <div class="small text-muted">Předplatné:</div>
+                <div class="fw-bold fs-4" id="checkout-tier-name">Agency & White-label</div>
+                <div class="fw-bold text-primary fs-3" id="checkout-tier-price">1 990 Kč / měsíc</div>
+            </div>
+            <form id="payment-form" onsubmit="completePayment(event)">
+                <div class="mb-3 text-dark">
+                    <label for="card-number" class="form-label small fw-bold">Číslo karty</label>
+                    <div class="input-group">
+                        <span class="input-group-text"><i class="far fa-credit-card"></i></span>
+                        <input type="text" class="form-control" id="card-number" value="4242 4242 4242 4242" placeholder="4242 4242 4242 4242" required>
+                    </div>
+                </div>
+                <div class="row g-2 mb-3 text-dark">
+                    <div class="col-6">
+                        <label for="card-expiry" class="form-label small fw-bold">Platnost</label>
+                        <input type="text" class="form-control" id="card-expiry" value="12/28" placeholder="MM/YY" required>
+                    </div>
+                    <div class="col-6">
+                        <label for="card-cvc" class="form-label small fw-bold">CVC</label>
+                        <input type="text" class="form-control" id="card-cvc" value="123" placeholder="123" required>
+                    </div>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 fw-bold py-2">Zaplatit a Aktivovat předplatné</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- About Section -->
+    <section class="seo-section" id="about">
+        <div class="container-fluid p-0">
+            <h2 class="mb-5">Jak to funguje?</h2>
+            <div class="row">
+                <div class="col-lg-10">
+                    <div class="row g-4">
+                        <div class="col-md-4">
+                            <div class="card h-100 border-0 bg-light p-3">
+                                <div class="card-body">
+                                    <div class="h1 text-primary mb-3"><i class="fas fa-spider"></i></div>
+                                    <h4 class="card-title">1. Procházení webu</h4>
+                                    <p class="card-text text-muted">Náš robot projde všechny veřejné stránky vašeho webu, přečte sitemapy a zkontroluje response kódy (korekce 404 chyb).</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card h-100 border-0 bg-light p-3">
+                                <div class="card-body">
+                                    <div class="h1 text-primary mb-3"><i class="fas fa-microscope"></i></div>
+                                    <h4 class="card-title">2. Detailní Analýza</h4>
+                                    <p class="card-text text-muted">Ověřujeme přítomnost klíčových SEO tagů, správnou délku titulků a popisků, a přítomnost strukturovaných JSON-LD dat.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card h-100 border-0 bg-light p-3">
+                                <div class="card-body">
+                                    <div class="h1 text-primary mb-3"><i class="fas fa-route"></i></div>
+                                    <h4 class="card-title">3. Akční plán</h4>
+                                    <p class="card-text text-muted">Na konci sestavíme detailní akční plán prioritizovaných úkolů s vývojářským backlogem k nápravě kritických chyb.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Contact Section -->
+    <section class="seo-section" id="contact">
+        <div class="container-fluid p-0">
+            <h2 class="mb-5">Kontakt</h2>
+            <div class="row">
+                <div class="col-lg-10">
+                    <p class="lead mb-4">Projekt vyvíjí a provozuje <strong>Luděk Kvapil</strong>, nezávislý Drupal vývojář a konzultant pro AI integrace a bezpečnost.</p>
+                    <div class="d-flex align-items-center gap-4 fs-4">
+                        <a href="https://www.linkedin.com/in/ludekkvapil/" target="_blank" class="text-primary"><i class="fab fa-linkedin"></i></a>
+                        <a href="https://github.com/siva01c" target="_blank" class="text-primary"><i class="fab fa-github"></i></a>
+                        <a href="mailto:ludek@ludekkvapil.cz" class="text-primary"><i class="fas fa-envelope"></i></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<script>
+    let pollInterval = null;
+    let lastLogIndex = 0;
+
+    document.getElementById('audit-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const url = document.getElementById('url-input').value.trim();
+        const email = document.getElementById('email-input').value.trim();
+        
+        if (!url || !email) return;
+
+        // Show progress panel
+        document.getElementById('form-panel').classList.add('d-none');
+        document.getElementById('progress-panel').classList.remove('d-none');
+        
+        // Reset progress/logs
+        document.getElementById('progress-bar').style.width = '15%';
+        document.getElementById('progress-status').innerText = 'Inicializace crawl procesu...';
+        const consoleBox = document.getElementById('log-console');
+        consoleBox.innerHTML = '<div class="log-line info">Odesílám požadavek serveru...</div>';
+        lastLogIndex = 0;
+
+        try {
+            const response = await fetch('/api/crawl', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url, email })
+            });
+
+            if (!response.ok) {
+                throw new Error('Nepodařilo se spustit analýzu. Server vrátil chybu.');
+            }
+
+            const data = await response.json();
+            const jobId = data.job_id;
+            
+            appendLog('Požadavek schválen. Spouštím crawl pro doménu: ' + data.domain, 'success');
+            
+            // Start polling status
+            startPolling(jobId);
+
+        } catch (err) {
+            appendLog('Chyba: ' + err.message, 'error');
+            document.getElementById('progress-status').innerText = 'Chyba při spuštění';
+            setTimeout(resetForm, 5000);
+        }
+    });
+
+    function startPolling(jobId) {
+        pollInterval = setInterval(async () => {
+            try {
+                const res = await fetch(`/api/crawl/status/${jobId}`);
+                if (!res.ok) throw new Error('Chyba při komunikaci se serverem.');
+
+                const data = await res.json();
+                
+                // Update progress bar
+                if (data.status === 'running') {
+                    document.getElementById('progress-bar').style.width = '40%';
+                    document.getElementById('progress-status').innerText = 'Procházím webové stránky...';
+                } else if (data.status === 'auditing') {
+                    document.getElementById('progress-bar').style.width = '75%';
+                    document.getElementById('progress-status').innerText = 'Generuji SEO zprávu...';
+                }
+
+                // Update logs
+                const newLogs = data.logs || [];
+                if (newLogs.length > lastLogIndex) {
+                    for (let i = lastLogIndex; i < newLogs.length; i++) {
+                        appendLog(newLogs[i]);
+                    }
+                    lastLogIndex = newLogs.length;
+                }
+
+                // Check finish
+                if (data.status === 'done' || data.status === 'completed') {
+                    clearInterval(pollInterval);
+                    document.getElementById('progress-bar').style.width = '100%';
+                    document.getElementById('progress-status').innerText = 'Dokončeno!';
+                    appendLog('Analýza úspěšně dokončena. Načítám report...', 'success');
+                    
+                    setTimeout(() => {
+                        loadReport(jobId);
+                    }, 1000);
+                } else if (data.status.startsWith('failed')) {
+                    clearInterval(pollInterval);
+                    appendLog('Proces selhal: ' + data.status, 'error');
+                    document.getElementById('progress-status').innerText = 'Crawl selhal';
+                    setTimeout(resetForm, 6000);
+                }
+
+            } catch (err) {
+                appendLog('Chyba dotazování statusu: ' + err.message, 'error');
+            }
+        }, 2000);
+    }
+
+    async function loadReport(jobId) {
+        try {
+            const res = await fetch(`/api/crawl/report/${jobId}`);
+            if (!res.ok) throw new Error('Nepodařilo se načíst zprávu z auditu.');
+
+            const data = await res.json();
+            
+            // Render markdown to HTML
+            const htmlContent = marked.parse(data.report);
+            
+            // Inject into UI
+            document.getElementById('report-target').innerHTML = htmlContent;
+            
+            // Transition panels
+            document.getElementById('progress-panel').classList.add('d-none');
+            document.getElementById('report-panel').classList.remove('d-none');
+            
+            // Scroll to report
+            document.getElementById('report-panel').scrollIntoView({ behavior: 'smooth' });
+
+        } catch (err) {
+            appendLog('Chyba načítání reportu: ' + err.message, 'error');
+            setTimeout(resetForm, 5000);
+        }
+    }
+
+    function appendLog(message, className = '') {
+        const consoleBox = document.getElementById('log-console');
+        const div = document.createElement('div');
+        div.className = 'log-line ' + className;
+        div.innerText = message;
+        consoleBox.appendChild(div);
+        consoleBox.scrollTop = consoleBox.scrollHeight;
+    }
+
+    function resetForm() {
+        if (pollInterval) clearInterval(pollInterval);
+        document.getElementById('audit-form').reset();
+        document.getElementById('form-panel').classList.remove('d-none');
+        document.getElementById('progress-panel').classList.add('d-none');
+        document.getElementById('report-panel').classList.add('d-none');
+        document.getElementById('audit').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    // --- Mock Auth & Stripe Billing integration ---
+    let currentUser = null;
+
+    function toggleAuth() {
+        if (currentUser) {
+            // Logout
+            currentUser = null;
+            document.getElementById('login-btn').innerText = 'Přihlásit se';
+            document.getElementById('user-profile').classList.add('d-none');
+            alert('Odhlášení úspěšné.');
+        } else {
+            // Login
+            const email = prompt('Zadejte svůj email pro přihlášení (Magic Link):');
+            if (email && email.includes('@')) {
+                currentUser = { email, tier: 'Free Tier' };
+                document.getElementById('login-btn').innerText = 'Odhlásit se';
+                document.getElementById('user-email').innerText = email;
+                document.getElementById('user-tier').innerText = 'Free Tier';
+                document.getElementById('user-profile').classList.remove('d-none');
+                alert('Magic link odeslán na: ' + email + '\nPřihlášení úspěšné.');
+            }
+        }
+    }
+
+    let selectedTier = null;
+    function startCheckout(tier, price) {
+        if (!currentUser) {
+            alert('Pro nákup předplatného se nejprve přihlaste.');
+            toggleAuth();
+            if (!currentUser) return; // cancelled or invalid email
+        }
+        selectedTier = tier;
+        document.getElementById('checkout-tier-name').innerText = tier + ' Předplatné';
+        document.getElementById('checkout-tier-price').innerText = price + ' Kč / měsíc';
+        document.getElementById('stripe-checkout').classList.remove('d-none');
+    }
+
+    function closeCheckout() {
+        document.getElementById('stripe-checkout').classList.add('d-none');
+    }
+
+    function completePayment(e) {
+        e.preventDefault();
+        alert('Platba přes Stripe byla úspěšně zpracována!');
+        closeCheckout();
+        if (currentUser && selectedTier) {
+            currentUser.tier = selectedTier;
+            document.getElementById('user-tier').innerText = selectedTier;
+        }
+    }
+</script>
+{{ end }}

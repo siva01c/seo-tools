@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
+import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -140,7 +141,9 @@ for (const domain of domainsToProcess) {
         .split('\n')
         .filter(Boolean)
         .map(line => JSON.parse(line) as Page);
-    allPages.push(...pages);
+    // Latest crawl of each URL only, HTML pages only — feeds and other XML
+    // resources have no titles/meta/H1/JSON-LD and would be flagged on every check.
+    allPages.push(...dedupePagesByUrl(pages).filter(isHtmlPage));
 }
 
 if (allPages.length === 0) {

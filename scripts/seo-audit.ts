@@ -3,6 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, langSuffix } from './i18n.js';
+import { isHtmlPage } from './page-records.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -436,6 +437,59 @@ function renderMarkdown(
     );
     task(m.todoVerifyCanonical, m.levHigh, m.levMedium, m.levLow, m.todoVerifyCanonicalBody);
 
+    // Conditional lines are collected in arrays and the skipped ones filtered out —
+    // an inline `${cond ? row : ''}` leaves a blank line, which terminates a markdown table.
+    const entityRelationshipLines = [
+        allJsonLdTypes.includes('Organization') ? m.eOrgYes : m.eOrgNo,
+        allJsonLdTypes.includes('WebSite') ? m.eWebsiteYes : m.eWebsiteNo,
+        allJsonLdTypes.includes('BreadcrumbList') ? m.eBreadcrumbYes : m.eBreadcrumbNo,
+        allJsonLdTypes.includes('LocalBusiness') ? m.eLocalBizYes : m.eLocalBizNo,
+        allJsonLdTypes.some(t => ['Article', 'BlogPosting'].includes(t))
+            ? m.eArticleYes(analyses.filter(a => a.pageType === 'Article').length)
+            : '',
+    ]
+        .filter(Boolean)
+        .join('\n');
+
+    const roadmapRows = [
+        missingSchema > 0
+            ? `| ${m.todoAddSchema(missingSchema)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |`
+            : '',
+        !allJsonLdTypes.includes('Organization')
+            ? `| ${m.todoAddOrg} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |`
+            : '',
+        !allJsonLdTypes.includes('WebSite')
+            ? `| ${m.todoAddWebsite} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |`
+            : '',
+        !allJsonLdTypes.includes('BreadcrumbList')
+            ? `| ${m.todoAddBreadcrumb} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |`
+            : '',
+        missingDesc > 0
+            ? `| ${m.todoWriteDesc(missingDesc)} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |`
+            : '',
+        noCanonical > 0
+            ? `| ${m.todoAddCanonical(noCanonical)} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |`
+            : '',
+        orphans > 0
+            ? `| ${m.todoFixOrphans(orphans)} | ${m.levMedium} | ${m.levMedium} | ${m.levMedium} |`
+            : '',
+        thinContent > 0
+            ? `| ${m.todoEnrichThin(thinContent)} | ${m.levMedium} | ${m.levHigh} | ${m.levHigh} |`
+            : '',
+        analyses.filter(
+            a => a.pageType === 'Branch/Contact' && !a.jsonLdTypes.includes('LocalBusiness')
+        ).length > 0
+            ? `| ${m.todoAddLocalBiz} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |`
+            : '',
+        brokenLinks.length > 0
+            ? `| ${m.roadmapFixBroken(brokenLinks.length)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |`
+            : '',
+        `| ${m.todoValidate} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |`,
+        `| ${m.todoVerifyCanonical} | ${m.levHigh} | ${m.levMedium} | ${m.levLow} |`,
+    ]
+        .filter(Boolean)
+        .join('\n');
+
     // ── Build report ─────────────────────────────────────────────────────────
 
     return `# ${m.reportTitle} — ${domain}
@@ -568,11 +622,7 @@ ${allJsonLdTypes.length > 0 ? allJsonLdTypes.map(t => `- **${t}**`).join('\n') :
 
 ### ${m.hEntityRelationship}
 
-${allJsonLdTypes.includes('Organization') ? m.eOrgYes : m.eOrgNo}
-${allJsonLdTypes.includes('WebSite') ? m.eWebsiteYes : m.eWebsiteNo}
-${allJsonLdTypes.includes('BreadcrumbList') ? m.eBreadcrumbYes : m.eBreadcrumbNo}
-${allJsonLdTypes.includes('LocalBusiness') ? m.eLocalBizYes : m.eLocalBizNo}
-${allJsonLdTypes.some(t => ['Article', 'BlogPosting'].includes(t)) ? m.eArticleYes(analyses.filter(a => a.pageType === 'Article').length) : ''}
+${entityRelationshipLines}
 
 ---
 
@@ -742,18 +792,7 @@ ${analyses
 
 | ${m.thRoadmap[0]} | ${m.thRoadmap[1]} | ${m.thRoadmap[2]} | ${m.thRoadmap[3]} |
 |------|----------|--------|--------|
-${missingSchema > 0 ? `| ${m.todoAddSchema(missingSchema)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
-${!allJsonLdTypes.includes('Organization') ? `| ${m.todoAddOrg} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |` : ''}
-${!allJsonLdTypes.includes('WebSite') ? `| ${m.todoAddWebsite} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
-${!allJsonLdTypes.includes('BreadcrumbList') ? `| ${m.todoAddBreadcrumb} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
-${missingDesc > 0 ? `| ${m.todoWriteDesc(missingDesc)} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |` : ''}
-${noCanonical > 0 ? `| ${m.todoAddCanonical(noCanonical)} | ${m.levMedium} | ${m.levMedium} | ${m.levLow} |` : ''}
-${orphans > 0 ? `| ${m.todoFixOrphans(orphans)} | ${m.levMedium} | ${m.levMedium} | ${m.levMedium} |` : ''}
-${thinContent > 0 ? `| ${m.todoEnrichThin(thinContent)} | ${m.levMedium} | ${m.levHigh} | ${m.levHigh} |` : ''}
-${analyses.filter(a => a.pageType === 'Branch/Contact' && !a.jsonLdTypes.includes('LocalBusiness')).length > 0 ? `| ${m.todoAddLocalBiz} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
-${brokenLinks.length > 0 ? `| ${m.roadmapFixBroken(brokenLinks.length)} | ${m.levHigh} | ${m.levHigh} | ${m.levMedium} |` : ''}
-| ${m.todoValidate} | ${m.levHigh} | ${m.levHigh} | ${m.levLow} |
-| ${m.todoVerifyCanonical} | ${m.levHigh} | ${m.levMedium} | ${m.levLow} |
+${roadmapRows}
 
 ---
 
@@ -836,8 +875,11 @@ const main = (): void => {
     try {
         const allPages = loadAllPages(domain, datesToLoad);
         const pdfPages = allPages.filter(isPdf);
-        const pages = allPages.filter(p => !isPdf(p));
-        console.log(`📄 Unique pages loaded: ${pages.length} HTML + ${pdfPages.length} PDF`);
+        const nonHtmlPages = allPages.filter(p => !isPdf(p) && !isHtmlPage(p));
+        const pages = allPages.filter(p => !isPdf(p) && isHtmlPage(p));
+        console.log(
+            `📄 Unique pages loaded: ${pages.length} HTML + ${pdfPages.length} PDF + ${nonHtmlPages.length} non-HTML (feeds/XML, excluded from analysis)`
+        );
 
         console.log('🔬 Analyzing pages...');
         const analyses = pages.map(analyzePage);

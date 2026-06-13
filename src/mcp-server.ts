@@ -85,6 +85,34 @@ const TOOLS = [
 
 // ── Tool handlers ─────────────────────────────────────────────────────────────
 
+const consecutiveFailures = new Map<string, number>();
+
+function recordCrawlResult(domain: string, success: boolean) {
+    if (success) {
+        consecutiveFailures.set(domain, 0);
+    } else {
+        const count = (consecutiveFailures.get(domain) ?? 0) + 1;
+        consecutiveFailures.set(domain, count);
+        if (count >= 3) {
+            const alertMsg = `[ALERT] Domain "${domain}" has failed crawl consecutively ${count} times!`;
+            console.error(alertMsg);
+            try {
+                fs.mkdirSync(STORAGE_DIR, { recursive: true });
+                const alertsFile = path.join(STORAGE_DIR, 'crawl_alerts.jsonl');
+                const alertObj = {
+                    timestamp: new Date().toISOString(),
+                    domain,
+                    consecutiveFailures: count,
+                    message: alertMsg
+                };
+                fs.appendFileSync(alertsFile, JSON.stringify(alertObj) + '\n');
+            } catch (err) {
+                console.error('Failed to write crawl alert to file:', err);
+            }
+        }
+    }
+}
+
 function handleCrawl(args: Record<string, unknown>): string {
     const url = String(args.url ?? '');
     if (!url) return JSON.stringify({ error: 'url is required' });
@@ -113,7 +141,9 @@ function handleCrawl(args: Record<string, unknown>): string {
     proc.stdout.on('data', (d: Buffer) => job.log.push(d.toString()));
     proc.stderr.on('data', (d: Buffer) => job.log.push(d.toString()));
     proc.on('close', code => {
-        job.status = code === 0 ? 'done' : `failed (exit ${code})`;
+        const success = code === 0;
+        job.status = success ? 'done' : `failed (exit ${code})`;
+        recordCrawlResult(domain, success);
     });
 
     return JSON.stringify({
@@ -229,9 +259,25 @@ function dispatch(method: string, params: Record<string, unknown>, id: unknown) 
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
+function readJsonBody(req: http.IncomingMessage): Promise<any> {
+    return new Promise((resolve, reject) => {
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk;
+        });
+        req.on('end', () => {
+            try {
+                resolve(JSON.parse(body || '{}'));
+            } catch (err) {
+                reject(err);
+            }
+        });
+    });
+}
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
     const send = (status: number, body: unknown) => {
         const json = JSON.stringify(body);
         res.writeHead(status, {
@@ -241,44 +287,197 @@ const server = http.createServer((req, res) => {
         res.end(json);
     };
 
-    if (!checkAuth(req)) {
-        return send(401, { error: 'Unauthorized' });
-    }
+    const urlPath = req.url ?? '';
 
-    if (req.method === 'GET' && req.url === '/health') {
+    // 1. Health check (No auth)
+    if (req.method === 'GET' && urlPath === '/health') {
         return send(200, { status: 'ok', activeJobs: jobs.size });
     }
 
-    if (req.method !== 'POST' || req.url !== '/mcp/post') {
-        return send(404, { error: 'Not found. Use POST /mcp/post' });
+    // 2. Public Static Web Server (No auth)
+    if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html' || urlPath.startsWith('/css/') || urlPath.startsWith('/js/') || urlPath === '/sitemap.xml' || urlPath === '/favicon.ico')) {
+        const cleanUrl = urlPath === '/' ? '/index.html' : urlPath;
+        const safePath = path.normalize(cleanUrl).replace(/^(\.\.[\/\\])+/, '');
+        const FRONTEND_DIR = path.resolve(process.env.FRONTEND_DIR ?? './frontend/public');
+        const filePath = path.join(FRONTEND_DIR, safePath);
+
+        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+            const ext = path.extname(filePath);
+            let contentType = 'text/html';
+            if (ext === '.css') contentType = 'text/css';
+            else if (ext === '.js') contentType = 'application/javascript';
+            else if (ext === '.json') contentType = 'application/json';
+            else if (ext === '.xml') contentType = 'application/xml';
+            
+            res.writeHead(200, { 'Content-Type': contentType });
+            fs.createReadStream(filePath).pipe(res);
+            return;
+        }
     }
 
-    let body = '';
-    req.on('data', chunk => {
-        body += chunk;
-    });
-    req.on('end', () => {
-        let rpc: { jsonrpc: string; id: unknown; method: string; params?: Record<string, unknown> };
+    // 3. Public API: Start crawl (No auth)
+    if (req.method === 'POST' && urlPath === '/api/crawl') {
         try {
-            rpc = JSON.parse(body);
-        } catch {
-            return send(400, {
-                jsonrpc: '2.0',
-                id: null,
-                error: { code: -32700, message: 'Parse error' },
+            const body = await readJsonBody(req);
+            const urlInput = String(body.url ?? '').trim();
+            const emailInput = String(body.email ?? '').trim();
+
+            if (!urlInput || !emailInput) {
+                return send(400, { error: 'url and email are required' });
+            }
+
+            let domain: string;
+            try {
+                domain = new URL(urlInput).hostname.replace(/^www\./, '');
+            } catch {
+                return send(400, { error: 'Invalid URL format' });
+            }
+
+            // Simple loop prevention
+            if (domain === 'localhost' || domain === '127.0.0.1' || domain === 'seo.ludekkvapil.cz' || domain === 'seo.local') {
+                return send(400, { error: 'Crawling this domain is not permitted' });
+            }
+
+            const jobId = crypto.randomUUID();
+            const job = {
+                status: 'running',
+                domain,
+                email: emailInput,
+                startedAt: new Date().toISOString(),
+                log: [`[server] Starting audit request for ${urlInput} (Email: ${emailInput})\n`]
+            };
+            jobs.set(jobId, job);
+
+            // Spawn crawler
+            const proc = spawn('npx', ['tsx', 'src/main.ts', urlInput], {
+                cwd: process.cwd(),
+                env: { ...process.env },
+                stdio: ['ignore', 'pipe', 'pipe'],
             });
+
+            proc.stdout.on('data', (d: Buffer) => job.log.push(d.toString()));
+            proc.stderr.on('data', (d: Buffer) => job.log.push(d.toString()));
+            
+            proc.on('close', (code) => {
+                if (code !== 0) {
+                    job.status = `failed (crawl exit ${code})`;
+                    job.log.push(`\n[server] Crawler failed with exit code ${code}\n`);
+                    recordCrawlResult(domain, false);
+                    return;
+                }
+
+                job.status = 'auditing';
+                job.log.push('\n[server] Crawl complete. Generating report...\n');
+
+                // Spawn audit generator
+                const auditProc = spawn('npx', ['tsx', 'scripts/seo-audit.ts', '--domain', domain, '--language', 'cs'], {
+                    cwd: process.cwd(),
+                    env: { ...process.env },
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                });
+
+                auditProc.stdout.on('data', (d: Buffer) => job.log.push(d.toString()));
+                auditProc.stderr.on('data', (d: Buffer) => job.log.push(d.toString()));
+
+                auditProc.on('close', (auditCode) => {
+                    if (auditCode !== 0) {
+                        job.status = `failed (audit exit ${auditCode})`;
+                        job.log.push(`\n[server] Audit script failed with exit code ${auditCode}\n`);
+                        recordCrawlResult(domain, false);
+                        return;
+                    }
+                    job.status = 'done';
+                    job.log.push(`\n[server] Report generation successful.\n`);
+                    recordCrawlResult(domain, true);
+                });
+            });
+
+            return send(200, { success: true, job_id: jobId, domain });
+
+        } catch (err) {
+            return send(400, { error: 'Failed to process request: ' + String(err) });
         }
-        const result = dispatch(rpc.method, rpc.params ?? {}, rpc.id);
-        if (result === null) {
-            // JSON-RPC notification — no response body
-            res.writeHead(204);
-            return res.end();
+    }
+
+    // 4. Public API: Get Status (No auth)
+    if (req.method === 'GET' && urlPath.startsWith('/api/crawl/status/')) {
+        const jobId = urlPath.split('/').pop() ?? '';
+        const job = jobs.get(jobId);
+        if (!job) {
+            return send(404, { error: 'Job not found' });
         }
-        return send(200, result);
-    });
+        return send(200, { status: job.status, domain: job.domain, logs: job.log });
+    }
+
+    // 5. Public API: Get Report (No auth)
+    if (req.method === 'GET' && urlPath.startsWith('/api/crawl/report/')) {
+        const jobId = urlPath.split('/').pop() ?? '';
+        const job = jobs.get(jobId);
+        if (!job) {
+            return send(404, { error: 'Job not found' });
+        }
+        if (job.status !== 'done') {
+            return send(400, { error: 'Job status is not done: ' + job.status });
+        }
+
+        const reportsDir = path.join(STORAGE_DIR, 'reports', job.domain);
+        if (!fs.existsSync(reportsDir)) {
+            return send(404, { error: 'Reports directory not found' });
+        }
+
+        const dates = fs.readdirSync(reportsDir).sort().reverse();
+        if (dates.length === 0) {
+            return send(404, { error: 'No reports generated yet' });
+        }
+
+        const latest = dates[0];
+        const reportPath = path.join(reportsDir, latest);
+        const files = fs.readdirSync(reportPath);
+        const reportFile = files.find(f => f.endsWith('.md'));
+        if (!reportFile) {
+            return send(404, { error: 'Markdown report file not found' });
+        }
+
+        const mdContent = fs.readFileSync(path.join(reportPath, reportFile), 'utf8');
+        return send(200, { report: mdContent });
+    }
+
+    // 6. MCP Gateway Endpoint (Requires auth)
+    if (req.method === 'POST' && urlPath === '/mcp/post') {
+        if (!checkAuth(req)) {
+            return send(401, { error: 'Unauthorized' });
+        }
+
+        let body = '';
+        req.on('data', chunk => {
+            body += chunk;
+        });
+        req.on('end', () => {
+            let rpc: { jsonrpc: string; id: unknown; method: string; params?: Record<string, unknown> };
+            try {
+                rpc = JSON.parse(body);
+            } catch {
+                return send(400, {
+                    jsonrpc: '2.0',
+                    id: null,
+                    error: { code: -32700, message: 'Parse error' },
+                });
+            }
+            const result = dispatch(rpc.method, rpc.params ?? {}, rpc.id);
+            if (result === null) {
+                res.writeHead(204);
+                return res.end();
+            }
+            return send(200, result);
+        });
+        return;
+    }
+
+    // Default 404
+    return send(404, { error: 'Not found' });
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`[mcp-server] SEO crawler MCP server listening on port ${PORT}`);
+    console.log(`[mcp-server] SEO crawler web & MCP server listening on port ${PORT}`);
     console.log(`[mcp-server] Auth: ${SEO_MCP_TOKEN ? 'enabled' : 'DISABLED (set SEO_MCP_TOKEN)'}`);
 });

@@ -51,14 +51,30 @@ services:
       target: builder
     container_name: seo-tools-mcp
     env_file:
+      - ../.env.shared
       - .env
     environment:
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
-      MCP_PORT: '3001'
+      MCP_PORT: '3000'
+      FRONTEND_DIR: '/home/seobot/frontend/public'
+      VIRTUAL_HOST: 'seo.ludekkvapil.cz,seo.local'
+      VIRTUAL_PORT: '3000'
+      VIRTUAL_PROTO: 'http'
+      VIRTUAL_NETWORK: 'agentic-ops'
+      HTTPS_METHOD: 'noredirect'
     volumes:
       - ./storage:/home/seobot/storage
-      - ./src:/app/src
+      - ./src:/home/seobot/src
+      - ./scripts:/home/seobot/scripts
+      - ./frontend:/home/seobot/frontend
     ports:
-      - '3001:3001'
+      - '3001:3000'
     command: ['npx', 'tsx', 'src/mcp-server.ts']
     restart: unless-stopped
+    networks:
+      - agentic-ops
+
+networks:
+  agentic-ops:
+    external: true
+

@@ -1,0 +1,8 @@
+title = "seo-tools — SEO Audit zdarma"
+baseURL = "https://seo.ludekkvapil.cz/"
+defaultContentLanguage = "cs"
+
+[params]
+  email = "ludek@ludekkvapil.cz"
+  firstName = "Luděk"
+  lastName = "Kvapil"
