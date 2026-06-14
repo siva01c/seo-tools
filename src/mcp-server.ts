@@ -297,6 +297,9 @@ async function sendSeoEmail(
     }
 
     const subject = `SEO Audit Report pro doménu: ${domain}`;
+    const body = `Dobrý den,\n\nv příloze Vám zasíláme vygenerovaný SEO Audit Report pro doménu: ${domain}.\n\nS pozdravem,\nRobot Luďka Kvapila`;
+
+    const base64Content = Buffer.from(reportMarkdown).toString('base64');
 
     const response = await fetch(mailApiUrl, {
         method: 'POST',
@@ -307,8 +310,15 @@ async function sendSeoEmail(
         body: JSON.stringify({
             to_email: toEmail,
             subject: subject,
-            body: reportMarkdown,
+            body: body,
             from_email: smtpFrom,
+            attachments: [
+                {
+                    content: base64Content,
+                    filename: `seo-audit-${domain}.md`,
+                    content_type: 'text/markdown; charset=utf-8',
+                },
+            ],
         }),
     });
 
