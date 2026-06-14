@@ -20,6 +20,23 @@ const jobs = new Map<
     { status: string; domain: string; email?: string; emails?: string[]; startedAt: string; log: string[] }
 >();
 
+function getSortedDateFolders(reportsDir: string): string[] {
+    if (!fs.existsSync(reportsDir)) return [];
+    
+    const parseDateFolder = (name: string): Date | null => {
+        const match = name.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (!match) return null;
+        const [_, d, m, y] = match;
+        return new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+    };
+
+    return fs.readdirSync(reportsDir)
+        .map(name => ({ name, date: parseDateFolder(name) }))
+        .filter(item => item.date !== null)
+        .sort((a, b) => b.date!.getTime() - a.date!.getTime())
+        .map(item => item.name);
+}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 
 function checkAuth(req: http.IncomingMessage): boolean {
@@ -177,7 +194,10 @@ function handleGetReport(args: Record<string, unknown>): string {
         return JSON.stringify({ error: `No reports found for domain: ${domain}` });
     }
 
-    const dates = fs.readdirSync(reportsDir).sort().reverse();
+    const dates = getSortedDateFolders(reportsDir);
+    if (dates.length === 0) {
+        return JSON.stringify({ error: `No reports found for domain: ${domain}` });
+    }
     const latest = dates[0];
     const reportPath = path.join(reportsDir, latest);
     const files = fs.readdirSync(reportPath);
@@ -208,7 +228,7 @@ function handleListReports(): string {
 
     const domains = fs.readdirSync(reportsDir).map(domain => {
         const domainPath = path.join(reportsDir, domain);
-        const dates = fs.readdirSync(domainPath).sort().reverse();
+        const dates = getSortedDateFolders(domainPath);
         return { domain, latestCrawl: dates[0] ?? null, totalCrawls: dates.length };
     });
 
@@ -541,7 +561,7 @@ const server = http.createServer(async (req, res) => {
                         try {
                             const reportsDir = path.join(STORAGE_DIR, 'reports', domain);
                             if (fs.existsSync(reportsDir)) {
-                                const dates = fs.readdirSync(reportsDir).sort().reverse();
+                             const dates = getSortedDateFolders(reportsDir);
                                 if (dates.length > 0) {
                                     const latest = dates[0];
                                     const reportPath = path.join(reportsDir, latest);
@@ -606,7 +626,7 @@ const server = http.createServer(async (req, res) => {
             return send(404, { error: 'Reports directory not found' });
         }
 
-        const dates = fs.readdirSync(reportsDir).sort().reverse();
+        const dates = getSortedDateFolders(reportsDir);
         if (dates.length === 0) {
             return send(404, { error: 'No reports generated yet' });
         }
