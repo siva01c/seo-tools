@@ -8,15 +8,16 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
+import * as tls from 'tls';
 
 const PORT = parseInt(process.env.MCP_PORT ?? '3001', 10);
 const SEO_MCP_TOKEN = process.env.SEO_MCP_TOKEN ?? '';
 const STORAGE_DIR = process.env.APIFY_LOCAL_STORAGE_DIR ?? './storage';
 
-// Active crawl jobs: jobId -> { status, domain, startedAt, log }
+// Active crawl jobs: jobId -> { status, domain, email?, emails?: string[], startedAt, log }
 const jobs = new Map<
     string,
-    { status: string; domain: string; startedAt: string; log: string[] }
+    { status: string; domain: string; email?: string; emails?: string[]; startedAt: string; log: string[] }
 >();
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
@@ -275,14 +276,73 @@ function readJsonBody(req: http.IncomingMessage): Promise<any> {
     });
 }
 
+async function sendSeoEmail(
+    toEmail: string,
+    domain: string,
+    reportMarkdown: string
+): Promise<void> {
+    const mailApiUrl = process.env.MAIL_API_URL || 'http://sales-assistant-assistant-1:8000/api/mail/send';
+    const mailApiToken = process.env.MAIL_API_TOKEN || '';
+    const smtpFrom = process.env.SMTP_FROM || 'seo@ludekkvapil.cz';
+
+    if (!toEmail) {
+        console.error('[mcp-server] Missing recipient.');
+        throw new Error('Missing recipient');
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(toEmail)) {
+        console.error(`[mcp-server] Invalid target email format: ${toEmail}`);
+        throw new Error(`Invalid target email format: ${toEmail}`);
+    }
+
+    const subject = `SEO Audit Report pro doménu: ${domain}`;
+
+    const response = await fetch(mailApiUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${mailApiToken}`,
+        },
+        body: JSON.stringify({
+            to_email: toEmail,
+            subject: subject,
+            body: reportMarkdown,
+            from_email: smtpFrom,
+        }),
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`Mail API responded with status ${response.status}: ${errText}`);
+    }
+    console.log(`[mcp-server] Email sent successfully to ${toEmail} via central Mail API`);
+}
+
 // ── HTTP server ───────────────────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
+    console.log(`[mcp-server] Incoming request: ${req.method} ${req.url}`);
+    // Handle CORS preflight
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400',
+        });
+        res.end();
+        return;
+    }
+
     const send = (status: number, body: unknown) => {
         const json = JSON.stringify(body);
         res.writeHead(status, {
             'Content-Type': 'application/json',
             'Content-Length': Buffer.byteLength(json),
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         });
         res.end(json);
     };
@@ -295,19 +355,34 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 2. Public Static Web Server (No auth)
-    if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html' || urlPath.startsWith('/css/') || urlPath.startsWith('/js/') || urlPath === '/sitemap.xml' || urlPath === '/favicon.ico')) {
-        const cleanUrl = urlPath === '/' ? '/index.html' : urlPath;
+    if (req.method === 'GET' && !urlPath.startsWith('/api/')) {
+        const isEn = urlPath.startsWith('/en/') || urlPath === '/en';
+        const subDir = isEn ? 'seo_en' : 'seo_cs';
+        let cleanUrl = urlPath;
+        if (isEn) {
+            cleanUrl = urlPath === '/en' || urlPath === '/en/' ? '/index.html' : urlPath.substring(3);
+        } else if (urlPath === '/') {
+            cleanUrl = '/index.html';
+        }
+        
         const safePath = path.normalize(cleanUrl).replace(/^(\.\.[\/\\])+/, '');
         const FRONTEND_DIR = path.resolve(process.env.FRONTEND_DIR ?? './frontend/public');
-        const filePath = path.join(FRONTEND_DIR, safePath);
+        const filePath = path.join(FRONTEND_DIR, subDir, safePath);
+        const expectedPrefix = path.join(FRONTEND_DIR, subDir);
 
-        if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+
+        if (filePath.startsWith(expectedPrefix) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
             const ext = path.extname(filePath);
             let contentType = 'text/html';
             if (ext === '.css') contentType = 'text/css';
             else if (ext === '.js') contentType = 'application/javascript';
             else if (ext === '.json') contentType = 'application/json';
             else if (ext === '.xml') contentType = 'application/xml';
+            else if (ext === '.svg') contentType = 'image/svg+xml';
+            else if (ext === '.png') contentType = 'image/png';
+            else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
+            else if (ext === '.ico') contentType = 'image/x-icon';
+            else if (ext === '.webmanifest') contentType = 'application/manifest+json';
             
             res.writeHead(200, { 'Content-Type': contentType });
             fs.createReadStream(filePath).pipe(res);
@@ -338,11 +413,71 @@ const server = http.createServer(async (req, res) => {
                 return send(400, { error: 'Crawling this domain is not permitted' });
             }
 
+            // 1. Check if report already exists for today (only one crawl per day per domain)
+            const now = new Date();
+            const day = String(now.getDate()).padStart(2, '0');
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const year = now.getFullYear();
+            const dateFolder = `${day}-${month}-${year}`;
+            const cachedReportsDir = path.join(STORAGE_DIR, 'reports', domain, dateFolder);
+
+            if (fs.existsSync(cachedReportsDir)) {
+                const files = fs.readdirSync(cachedReportsDir);
+                const reportFile = files.find(f => f.endsWith('.md'));
+                if (reportFile) {
+                    const jobId = crypto.randomUUID();
+                    const mdContent = fs.readFileSync(path.join(cachedReportsDir, reportFile), 'utf8');
+                    
+                    jobs.set(jobId, {
+                        status: 'done',
+                        domain,
+                        email: emailInput,
+                        emails: [emailInput],
+                        startedAt: new Date().toISOString(),
+                        log: [`[server] Audit report for ${domain} was already generated today. Reusing cached report.\n`]
+                    });
+
+                    if (emailInput) {
+                        console.log(`[mcp-server] Reusing cached report. Sending email to ${emailInput}...`);
+                        sendSeoEmail(emailInput, domain, mdContent)
+                            .then(() => console.log(`[mcp-server] Cached email sent to ${emailInput}`))
+                            .catch(err => console.error('Failed to send cached email:', err));
+                    }
+
+                    return send(200, { success: true, job_id: jobId, domain, cached: true });
+                }
+            }
+
+            // 2. Check if a crawl job is currently running or auditing for this domain
+            let activeJobId: string | null = null;
+            let activeJob: any = null;
+            for (const [id, j] of jobs.entries()) {
+                if (j.domain === domain && (j.status === 'running' || j.status === 'auditing')) {
+                    activeJobId = id;
+                    activeJob = j;
+                    break;
+                }
+            }
+
+            if (activeJobId && activeJob) {
+                console.log(`[mcp-server] Crawl already running for ${domain}. Attaching email ${emailInput}.`);
+                if (emailInput) {
+                    if (!activeJob.emails) {
+                        activeJob.emails = [activeJob.email];
+                    }
+                    if (!activeJob.emails.includes(emailInput)) {
+                        activeJob.emails.push(emailInput);
+                    }
+                }
+                return send(200, { success: true, job_id: activeJobId, domain, attached: true });
+            }
+
             const jobId = crypto.randomUUID();
             const job = {
                 status: 'running',
                 domain,
                 email: emailInput,
+                emails: [emailInput],
                 startedAt: new Date().toISOString(),
                 log: [`[server] Starting audit request for ${urlInput} (Email: ${emailInput})\n`]
             };
@@ -389,6 +524,42 @@ const server = http.createServer(async (req, res) => {
                     job.status = 'done';
                     job.log.push(`\n[server] Report generation successful.\n`);
                     recordCrawlResult(domain, true);
+
+                    // Read the report file and email it
+                    const emailsToNotify = job.emails && job.emails.length > 0 ? job.emails : (job.email ? [job.email] : []);
+                    if (emailsToNotify.length > 0) {
+                        try {
+                            const reportsDir = path.join(STORAGE_DIR, 'reports', domain);
+                            if (fs.existsSync(reportsDir)) {
+                                const dates = fs.readdirSync(reportsDir).sort().reverse();
+                                if (dates.length > 0) {
+                                    const latest = dates[0];
+                                    const reportPath = path.join(reportsDir, latest);
+                                    const files = fs.readdirSync(reportPath);
+                                    const reportFile = files.find(f => f.endsWith('.md'));
+                                    if (reportFile) {
+                                        const mdContent = fs.readFileSync(path.join(reportPath, reportFile), 'utf8');
+                                        for (const email of emailsToNotify) {
+                                            job.log.push(`[server] Sending audit report email to ${email}...\n`);
+                                            sendSeoEmail(email, domain, mdContent)
+                                                .then(() => {
+                                                    job.log.push(`[server] Audit report email sent successfully to ${email}.\n`);
+                                                })
+                                                .catch((err: any) => {
+                                                    job.log.push(`[server] Failed to send email to ${email}: ${err.message}\n`);
+                                                    console.error(`Email sending failed for ${email}:`, err);
+                                                });
+                                        }
+                                    } else {
+                                        job.log.push(`[server] Could not send email: markdown report file not found.\n`);
+                                    }
+                                }
+                            }
+                        } catch (err: any) {
+                            job.log.push(`[server] Error during email preparation: ${err.message}\n`);
+                            console.error('Email preparation error:', err);
+                        }
+                    }
                 });
             });
 

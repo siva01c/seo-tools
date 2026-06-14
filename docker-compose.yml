@@ -66,7 +66,7 @@ services:
       - ./storage:/home/seobot/storage
       - ./src:/home/seobot/src
       - ./scripts:/home/seobot/scripts
-      - ./frontend:/home/seobot/frontend
+      - ../ludekkvapil/public:/home/seobot/frontend/public:ro
     ports:
       - '3001:3000'
     command: ['npx', 'tsx', 'src/mcp-server.ts']

@@ -251,9 +251,25 @@ try {
     if (commandLineTargetUrl) {
         config.targets.startUrls = [commandLineTargetUrl];
         console.log(`🔄 Overriding configuration with command line URL: ${commandLineTargetUrl}`);
+        try {
+            const hostname = new URL(commandLineTargetUrl).hostname;
+            const cleanHost = hostname.replace(/^www\./, '');
+            config.targets.allowedDomains = [cleanHost, `www.${cleanHost}`];
+            console.log(`🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`);
+        } catch (err: any) {
+            console.warn(`⚠️ Failed to parse domain for allowedDomains: ${err.message}`);
+        }
     } else if (envTargetUrl) {
         config.targets.startUrls = [envTargetUrl];
         console.log(`🔄 Overriding configuration with environment URL: ${envTargetUrl}`);
+        try {
+            const hostname = new URL(envTargetUrl).hostname;
+            const cleanHost = hostname.replace(/^www\./, '');
+            config.targets.allowedDomains = [cleanHost, `www.${cleanHost}`];
+            console.log(`🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`);
+        } catch (err: any) {
+            console.warn(`⚠️ Failed to parse domain for allowedDomains: ${err.message}`);
+        }
     }
 
     // Validate configuration
