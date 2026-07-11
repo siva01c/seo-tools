@@ -26,8 +26,7 @@ report is near zero; margins are driven by subscription price minus a few cents 
 - AI-readiness analysis: JSON-LD/microdata extraction, AI metadata, heading structure — the "GEO"
   (Generative Engine Optimization) angle.
 - Multi-domain, date-versioned storage — already agency-shaped (one workspace, many client sites).
-- MCP HTTP server exposing `crawl`, `get_report`, `list_reports` — AI agents can drive the whole
-  workflow programmatically.
+- MCP HTTP server exposing `crawl`, `get_report`, `list_reports` — AI agents can drive the whole workflow programmatically. It also integrates **Marek** (the AI SEO consultant persona) allowing LLMs to load prompt guidelines (`seo-consultant-marek`) and read audit reports directly.
 - Docker-first: reproducible, self-hostable.
 
 ### What must be built for SaaS

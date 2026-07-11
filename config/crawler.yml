@@ -11,7 +11,8 @@ targets:
   # CRAWLER_SITEMAP_DISCOVERY=true
   startUrls: []
   allowedDomains: []
-  excludedDomains: []
+  excludedDomains:
+    - 'ftp.drupal.org'
   excludedPaths: []
   sitemapDiscovery: true
   # HTML sitemap URL (e.g. /sitemap.html) - leave empty to disable
@@ -33,11 +34,11 @@ crawler:
   headless: false
 
   # Delay between requests in milliseconds (will be randomized)
-  requestDelay: 20000
+  requestDelay: 100
 
   # Random delay range in milliseconds (3 to 15 seconds for visible crawling)
-  requestDelayMin: 3000
-  requestDelayMax: 9000
+  requestDelayMin: 50
+  requestDelayMax: 200
 
   # Single URL mode - only crawl the specified URL, don't follow links
   singleUrlMode: false

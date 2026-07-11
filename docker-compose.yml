@@ -9,16 +9,16 @@ services:
     # regardless of the host UID. The production image (Dockerfile final stage) runs as the
     # non-root `seobot` user.
     user: '0'
+    network_mode: 'host'
     env_file:
       - .env
     environment:
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
-    # To crawl a site served on the host (e.g. a local dev vhost) whose hostname resolves to
-    # 127.0.0.1, map that hostname to the host gateway so the container can reach it, e.g.:
-    #   extra_hosts:
-    #     - 'my-local-site.example:host-gateway'
     volumes:
       - ./storage:/home/seobot/storage
+      - ./config:/home/seobot/config
+      - ./scripts:/home/seobot/scripts
+      - ./src:/home/seobot/src
     command: ['sleep', 'infinity']
 
   typecheck:
@@ -57,7 +57,8 @@ services:
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
       MCP_PORT: '3000'
       FRONTEND_DIR: '/home/seobot/frontend/public'
-      VIRTUAL_HOST: 'seo.ludekkvapil.cz,seo.local'
+      VIRTUAL_HOST: 'seo.mcpserver.cz,seo.local'
+      LETSENCRYPT_HOST: 'seo.mcpserver.cz'
       VIRTUAL_PORT: '3000'
       VIRTUAL_PROTO: 'http'
       VIRTUAL_NETWORK: 'agentic-ops'

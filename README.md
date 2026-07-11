@@ -810,6 +810,30 @@ The crawler requires a target URL to be provided via:
 
 **If no URL is provided, the crawler will exit with "Domain is required" error.**
 
+## 🤖 MCP Server & AI Persona (Marek)
+
+The project includes an **MCP (Model Context Protocol)** server that enables LLM models and AI agent workflows (like Claude Code, Cursor, or custom gateway bots) to interact with the crawling engine and access reports.
+
+It also integrates the AI persona **Marek** — a senior SEO consultant.
+
+### Key MCP Features:
+1.  **Tools:**
+    *   `crawl`: Trigger a crawl job asynchronously.
+    *   `get_report`: Retrieve report status or data for a domain.
+    *   `list_reports`: List all crawled domains and their audit dates.
+2.  **Prompts (Templates):**
+    *   `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`). Supports a `domain` argument which appends the latest crawl report as context.
+3.  **Resources (Data Sources):**
+    *   `seo://reports/{domain}/latest`: Serves the latest generated Markdown audit report for the specified domain.
+
+### Running the MCP Server
+*   **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container port `3000` on the `mcp` service).
+*   **Locally:**
+    ```bash
+    npm run mcp
+    ```
+Requires setting `SEO_MCP_TOKEN` in `.env` for Basic Authorization (if configured). For more details on the persona's role and rules, see [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
+
 ## 📈 Performance Tips
 
 - Start with **basic extraction modules** for initial testing

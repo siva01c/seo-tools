@@ -32,6 +32,36 @@ import { extractHtmlContent } from './services/htmlContentService.js';
 import { Logger } from './utils/logger.js';
 import { generateUniqueId, generateContentId } from './utils/idGenerator.js';
 
+// Track statistics
+let totalUrlsDiscovered = 0;
+let pagesProcessed = 0;
+let errorsEncountered = 0;
+let hasRetried403WithHeadlessFalse = false;
+let consecutive403Errors = 0;
+let lastUserAgentRotation = 0;
+const seoDataExtracted = {
+    totalMetaTags: 0,
+    totalStructuredData: 0,
+    totalInternalLinks: 0,
+    totalExternalLinks: 0,
+};
+
+// Crawling map to prevent duplicate URL crawling and track status codes
+const crawlingMap = new Map<
+    string,
+    {
+        status: number | null;
+        statusText: string | null;
+        timestamp: string;
+        crawlCount: number;
+    }
+>();
+
+// Collect all internal links for sitemap generation
+const allInternalLinksForSitemap = new Set<string>();
+// Also track all crawled URLs for sitemap
+const allCrawledUrls = new Set<string>();
+
 // First, we need to determine the target URL to configure storage before Actor.init()
 // Parse command line arguments for target URL, single URL mode, and excluded domains
 const args = process.argv.slice(2);
@@ -120,6 +150,13 @@ const commandLineHtmlSitemapUrl =
 // Parse --html-content flag (enables htmlContent extraction module)
 const commandLineHtmlContent = args.includes('--html-content');
 
+// Parse date folder from command line (--date-folder DD-MM-YYYY or --date DD-MM-YYYY) or environment variable DATE_FOLDER
+const dateFolderIndex = args.findIndex(arg => arg === '--date-folder' || arg === '--date');
+const commandLineDateFolder =
+    dateFolderIndex !== -1 && args[dateFolderIndex + 1]
+        ? args[dateFolderIndex + 1]
+        : (process.env.DATE_FOLDER || null);
+
 // Check for START_URL environment variable (for Docker)
 const envTargetUrl = process.env.START_URL;
 
@@ -176,7 +213,7 @@ if (!earlyTargetUrl) {
 }
 
 // Initialize domain-based storage BEFORE Actor.init()
-const storageConfig = storageService.initializeStorage(earlyTargetUrl);
+const storageConfig = storageService.initializeStorage(earlyTargetUrl, './storage', commandLineDateFolder);
 storageService.configureApifyStorage();
 
 // Initialize URL index service
@@ -185,6 +222,26 @@ const urlIndexService = new UrlIndexService(
     storageConfig.dateFolder,
     storageConfig.basePath
 );
+
+// Populate crawlingMap with existing entries from the index to ensure they are skipped if visited
+try {
+    const indexData = urlIndexService.getIndex();
+    if (indexData && indexData.urls) {
+        Object.entries(indexData.urls).forEach(([url, entry]) => {
+            if (entry.status === 'completed' || entry.status === 'failed') {
+                crawlingMap.set(url, {
+                    status: entry.status === 'completed' ? 200 : 500,
+                    statusText: entry.status === 'completed' ? 'OK' : 'Failed',
+                    timestamp: entry.timestamp,
+                    crawlCount: 1,
+                });
+            }
+        });
+        console.log(`📋 Loaded ${crawlingMap.size} completed/failed URLs into the crawled page cache.`);
+    }
+} catch (error) {
+    console.warn('⚠️ Failed to pre-populate crawlingMap from URL index:', error);
+}
 
 // Initialize Apify Actor after storage configuration
 await Actor.init();
@@ -446,6 +503,776 @@ const getRandomDelay = (): number => {
     return Math.floor(Math.random() * (max - min + 1)) + min;
 };
 
+// Use the requestHandler to process each of the crawled pages.
+const requestHandler = async ({ request, page, enqueueLinks, log, pushData, response }: any): Promise<void> => {
+    const currentUrl = request.loadedUrl || request.url;
+
+    // Check rate limiting before processing
+    if (rateLimitingService) {
+        const rateLimitStatus = rateLimitingService.canMakeRequest();
+
+        if (rateLimitStatus.isBlocked) {
+            const delayMs = rateLimitStatus.nextAllowedTime - Date.now();
+            const delaySec = Math.ceil(delayMs / 1000);
+
+            console.log(
+                `⏳ Rate limit reached - waiting ${delaySec} seconds before processing ${currentUrl}`
+            );
+            console.log(
+                `📊 Blocking rule: ${rateLimitStatus.blockingRule?.description ?? 'Unknown rule'}`
+            );
+
+            await Actor.setStatusMessage(`Rate limited - waiting ${delaySec}s...`);
+            await new Promise(resolve => setTimeout(resolve, delayMs));
+
+            console.log(`✅ Rate limit wait completed - proceeding with ${currentUrl}`);
+        }
+    }
+
+    // Update URL status to processing
+    urlIndexService.updateUrlStatus(currentUrl, 'processing');
+
+    // Check if URL was already crawled
+    if (crawlingMap.has(currentUrl)) {
+        const existingEntry = crawlingMap.get(currentUrl);
+        if (!existingEntry) return;
+        existingEntry.crawlCount++;
+        console.log(
+            `🔄 URL already crawled ${existingEntry.crawlCount} times: ${currentUrl} (Status: ${existingEntry.status})`
+        );
+
+        // Skip if already successfully crawled
+        if (existingEntry.status && existingEntry.status >= 200 && existingEntry.status < 400) {
+            console.log(`✅ Skipping already successfully crawled URL: ${currentUrl}`);
+            return;
+        }
+    }
+
+    pagesProcessed++;
+    const progress = config.crawler.maxRequestsPerCrawl
+        ? `${pagesProcessed}/${config.crawler.maxRequestsPerCrawl}`
+        : `${pagesProcessed}`;
+
+    await Actor.setStatusMessage(`Processing page ${progress}: ${currentUrl}`);
+
+    // Different scrolling behavior based on headless mode
+    if (!config.crawler.headless) {
+        // Non-headless mode: Wait for full page load then scroll to middle
+        console.log(
+            `🌐 Page loaded: ${request.loadedUrl} - waiting for full load then scrolling to middle...`
+        );
+
+        // Wait for page to be fully loaded (additional time for non-headless)
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('⏰ Waited 3 seconds for full page load...');
+
+        try {
+            await page.evaluate((): Promise<void> => {
+                return new Promise<void>(resolve => {
+                    // eslint-disable-next-line no-undef
+                    const scrollHeight = document.body.scrollHeight;
+                    const middlePosition = scrollHeight / 2;
+
+                    console.log(
+                        `📜 Scrolling to middle of page (${Math.round(middlePosition)}px)...`
+                    );
+
+                    // Smooth scroll to middle
+                    // eslint-disable-next-line no-undef
+                    window.scrollTo({
+                        top: middlePosition,
+                        behavior: 'smooth',
+                    });
+
+                    // Wait for smooth scroll to complete
+                    setTimeout(() => {
+                        console.log(
+                            `📜 Reached middle of page, staying here for inspection...`
+                        );
+                        resolve();
+                    }, 2000);
+                });
+            });
+
+            // Additional wait time for inspection in visible mode
+            const waitTime = 5000 + Math.random() * 3000; // 5-8 seconds
+            console.log(
+                `📜 Staying at middle position for ${Math.round(waitTime / 1000)} seconds for inspection...`
+            );
+            await new Promise(resolve => setTimeout(resolve, waitTime));
+            console.log('⏰ Continuing with data extraction...');
+        } catch (scrollError) {
+            console.warn(
+                `⚠️  Middle scrolling failed for ${request.loadedUrl}: ${scrollError instanceof Error ? scrollError.message : String(scrollError)}`
+            );
+            console.log('⏰ Continuing with data extraction without scrolling...');
+        }
+    } else {
+        // Headless mode: Original bottom scrolling behavior
+        console.log(`🌐 Page loaded: ${request.loadedUrl} - scrolling to bottom...`);
+
+        try {
+            await page.evaluate((): Promise<void> => {
+                return new Promise<void>(resolve => {
+                    let totalHeight = 0;
+                    const baseDistance = 50; // Base scroll distance
+                    const baseDelay = 800; // Base delay between scrolls (800ms)
+                    let scrollCount = 0;
+
+                    const scrollStep = (): void => {
+                        // eslint-disable-next-line no-undef
+                        const scrollHeight = document.body.scrollHeight;
+
+                        // Random variations to mimic human scrolling
+                        const randomDistance = baseDistance + Math.random() * 30 - 15; // 35-65px
+                        const randomDelay = baseDelay + Math.random() * 400 - 200; // 600-1000ms
+
+                        // eslint-disable-next-line no-undef
+                        window.scrollBy(0, randomDistance);
+                        totalHeight += randomDistance;
+                        scrollCount++;
+
+                        // Log progress every 5 scrolls
+                        if (scrollCount % 5 === 0) {
+                            console.log(
+                                `📜 Scroll progress: ${scrollCount} scrolls, ${Math.round(totalHeight)}px scrolled`
+                            );
+                        }
+
+                        // Add longer breaks every 15 scrolls (more human-like)
+                        if (scrollCount % 15 === 0) {
+                            console.log(
+                                `⏸️  Taking a 3-second break after ${scrollCount} scrolls...`
+                            );
+                            setTimeout(() => {
+                                if (totalHeight >= scrollHeight) {
+                                    console.log(`📜 Reached bottom, scrolling back to top...`);
+                                    // eslint-disable-next-line no-undef
+                                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                                    setTimeout(resolve, 1500); // Wait for smooth scroll
+                                } else {
+                                    setTimeout(scrollStep, randomDelay);
+                                }
+                            }, 3000);
+                        } else {
+                            if (totalHeight >= scrollHeight) {
+                                console.log(`📜 Reached bottom, scrolling back to top...`);
+                                // eslint-disable-next-line no-undef
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                                setTimeout(resolve, 1500); // Wait for smooth scroll
+                            } else {
+                                setTimeout(scrollStep, randomDelay);
+                            }
+                        }
+                    };
+
+                    // Start scrolling
+                    scrollStep();
+                });
+            });
+        } catch (scrollError) {
+            console.warn(
+                `⚠️  Scrolling failed for ${request.loadedUrl}: ${scrollError instanceof Error ? scrollError.message : String(scrollError)}`
+            );
+            console.log('⏰ Continuing with data extraction without scrolling...');
+        }
+    }
+
+    // Add human-like mouse movement (for both modes)
+    try {
+        await page.mouse.move(Math.random() * 800 + 100, Math.random() * 600 + 100);
+        await page.mouse.move(Math.random() * 800 + 100, Math.random() * 600 + 100);
+    } catch (mouseError) {
+        console.warn(
+            `⚠️  Mouse movement failed: ${mouseError instanceof Error ? mouseError.message : String(mouseError)}`
+        );
+    }
+
+    // Add this crawled URL to the sitemap collection
+    allCrawledUrls.add(request.loadedUrl || request.url);
+
+    // Update base domain if this is the first request and we got redirected
+    if (pagesProcessed === 1 && request.loadedUrl) {
+        const actualDomain = new URL(request.loadedUrl).hostname;
+        if (actualDomain !== baseDomain) {
+            console.log(
+                `🔄 Domain updated from ${baseDomain} to ${actualDomain} (redirect detected)`
+            );
+            baseDomain = actualDomain;
+        }
+    }
+
+    const title = await page.title();
+
+    // Log crawler progress every 10 pages
+    if (pagesProcessed % 10 === 0) {
+        logger.crawlerStats({
+            pagesProcessed,
+            totalUrls: config.crawler.maxRequestsPerCrawl || totalUrlsDiscovered,
+            errorsEncountered,
+            currentUrl: request.loadedUrl,
+        });
+    }
+
+    // Get response information (if enabled)
+    const responseData = config.extraction.modules.responseData
+        ? {
+              status: response?.status() ?? null,
+              statusText: response?.statusText() ?? null,
+              headers: response?.headers() ?? {},
+              url: request.loadedUrl,
+          }
+        : undefined;
+
+    // Update crawling map with current URL status
+    const currentStatus = response?.status() ?? null;
+    const currentStatusText = response?.statusText() ?? null;
+    crawlingMap.set(currentUrl, {
+        status: currentStatus,
+        statusText: currentStatusText,
+        timestamp: new Date().toISOString(),
+        crawlCount: crawlingMap.has(currentUrl)
+            ? (crawlingMap.get(currentUrl)?.crawlCount ?? 0) + 1
+            : 1,
+    });
+
+    console.log(`📊 Status tracking: ${currentUrl} → ${currentStatus} (${currentStatusText})`);
+
+    // Check for blocked or redirected responses
+    if (response?.status() && (response.status() >= 400 || response.status() === 302)) {
+        const statusCode = response.status();
+        const statusText = response.statusText();
+
+        if (statusCode === 403) {
+            consecutive403Errors++;
+            console.warn(
+                `🚫 Access denied (403) for ${request.loadedUrl} - likely blocked by anti-bot protection (${consecutive403Errors} consecutive)`
+            );
+
+            // Rotate user-agent after 3 consecutive 403s
+            if (consecutive403Errors >= 3 && Date.now() - lastUserAgentRotation > 60000) {
+                const newUserAgent = globalUserAgentRotator.getNextUserAgent();
+                console.log(`🔄 Rotating User-Agent due to repeated 403 errors`);
+
+                // Update the user-agent for future requests
+                await page.setExtraHTTPHeaders({
+                    'User-Agent': newUserAgent,
+                });
+
+                lastUserAgentRotation = Date.now();
+                consecutive403Errors = 0; // Reset counter after rotation
+            }
+
+            // If running in visible browser mode, wait 20 seconds before next URL
+            if (!config.crawler.headless) {
+                console.log(
+                    `⏰ Headless mode is OFF - waiting 20 seconds before processing next URL to avoid detection...`
+                );
+                await new Promise(resolve => setTimeout(resolve, 20000));
+                console.log(`✅ 20-second wait completed, continuing to next URL...`);
+            }
+        } else if (statusCode === 404) {
+            // Reset 403 counter on successful requests
+            consecutive403Errors = 0;
+            console.warn(`❌ Page not found (404) for ${request.loadedUrl}`);
+        } else if (statusCode === 302) {
+            console.warn(
+                `🔄 Redirected (302) for ${request.loadedUrl} - possible login required`
+            );
+        } else {
+            console.warn(`⚠️  HTTP ${statusCode} ${statusText} for ${request.loadedUrl}`);
+        }
+
+        // Continue with extraction but with limited data
+        console.log('📊 Continuing with limited data extraction...');
+    }
+
+    // Extract all links (if enabled)
+    let allLinks: Array<{
+        text: string;
+        href: string;
+        rel: string;
+        link_title: string;
+    }> = [];
+
+    // Wait for page to be fully loaded before extracting links
+    await page.waitForLoadState('networkidle');
+    let internalLinks: Array<{
+        text: string;
+        href: string;
+        rel: string;
+        link_title: string;
+    }> = [];
+    let externalLinks: Array<{
+        text: string;
+        href: string;
+        rel: string;
+        link_title: string;
+    }> = [];
+
+    if (config.extraction.modules.links) {
+        console.log(`🔍 Extracting links from: ${request.loadedUrl}`);
+
+        allLinks = await page.$$eval('a[href]', anchors =>
+            anchors.map(a => {
+                const anchor = a as HTMLAnchorElement;
+                return {
+                    text: anchor.textContent?.trim() ?? '',
+                    href: anchor.href,
+                    // Only extract attributes if configured
+                    // Attributes can be added here if needed
+                    rel: anchor.rel,
+                    link_title: anchor.title || '',
+                };
+            })
+        );
+
+        console.log(`🔗 Found ${allLinks.length} total links on page`);
+        logger.infoUrl(currentUrl, `Found ${allLinks.length} total links on page`);
+
+        // Categorize links if enabled
+        console.log(
+            `🔧 categorizeByDomain setting: ${config.extraction.links.categorizeByDomain}`
+        );
+        if (config.extraction.links.categorizeByDomain) {
+            const categorized = categorizeLinks(
+                allLinks,
+                baseDomain,
+                config.targets.excludedDomains,
+                config.targets.excludedPaths,
+                config.targets.allowedDomains
+            );
+            internalLinks = categorized.internal;
+            externalLinks = categorized.external;
+
+            // Collect internal links for sitemap generation
+            internalLinks.forEach(link => {
+                if (link.href && typeof link.href === 'string') {
+                    allInternalLinksForSitemap.add(link.href);
+                }
+            });
+
+            // Update statistics
+            console.log(
+                `📊 Page stats: ${internalLinks.length} internal, ${externalLinks.length} external links`
+            );
+            seoDataExtracted.totalInternalLinks += internalLinks.length;
+            seoDataExtracted.totalExternalLinks += externalLinks.length;
+            console.log(
+                `📈 Running totals: ${seoDataExtracted.totalInternalLinks} internal, ${seoDataExtracted.totalExternalLinks} external`
+            );
+        }
+    }
+
+    // Extract SEO metadata (if enabled)
+    let googleMetaTags = {};
+    let specialLinks = {};
+    let hasDataNoSnippet = false;
+
+    if (config.extraction.modules.seoTags) {
+        googleMetaTags = await extractGoogleMetaTags(page);
+        seoDataExtracted.totalMetaTags += Object.keys(googleMetaTags).length;
+    }
+
+    if (config.extraction.modules.specialLinks) {
+        specialLinks = await extractSpecialLinks(page);
+        hasDataNoSnippet = await detectDataNoSnippet(page);
+    }
+
+    // Extract AI-specific metadata (if enabled)
+    let jsonLdData: unknown[] = [];
+    let microdataItems: unknown[] = [];
+    let customMetadata = {};
+    let pageMapData = {};
+    let contentMetrics = {};
+
+    if (config.extraction.modules.structuredData) {
+        jsonLdData = await extractJsonLdStructuredData(page);
+        microdataItems = await extractMicrodata(page);
+        seoDataExtracted.totalStructuredData += jsonLdData.length + microdataItems.length;
+    }
+
+    if (config.extraction.modules.aiMetadata) {
+        customMetadata = await extractCustomMetadata(page);
+    }
+
+    if (config.extraction.modules.pageMap) {
+        pageMapData = await extractPageMapData(page);
+    }
+
+    if (config.extraction.modules.contentMetrics) {
+        contentMetrics = await extractContentMetrics(page);
+    }
+
+    // Extract HTML content (full page + main article body)
+    let htmlContent: { full: string; main: string; mainSelector: string } | undefined;
+    if (config.extraction.modules.htmlContent) {
+        htmlContent = await extractHtmlContent(page);
+        console.log(
+            `🧩 HTML content extracted: full=${htmlContent.full.length} chars, main=${htmlContent.main.length} chars (selector: ${htmlContent.mainSelector})`
+        );
+    }
+
+    // Extract image metadata
+    let imagesData: unknown[] = [];
+    if (config.extraction.modules.images) {
+        imagesData = await extractImages(page);
+        console.log(`🖼️  Extracted ${imagesData.length} images from ${request.loadedUrl}`);
+    }
+
+    // Extract full text content from the page (without HTML code)
+    let fullTextContent = '';
+    try {
+        fullTextContent = await page.evaluate((): string => {
+            // Remove script and style elements completely
+            // eslint-disable-next-line no-undef
+            const scripts = document.querySelectorAll('script, style, noscript');
+            scripts.forEach(element => element.remove());
+
+            // Get text content from body, removing extra whitespace
+
+            const bodyText =
+                // eslint-disable-next-line no-undef
+                document.body?.innerText ?? document.documentElement.innerText ?? '';
+
+            // Clean up the text: normalize whitespace, remove extra line breaks
+            return bodyText
+                .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+                .replace(/\n\s*\n/g, '\n') // Replace multiple line breaks with single line break
+                .trim(); // Remove leading/trailing whitespace
+        });
+
+        console.log(
+            `📄 Extracted ${fullTextContent.length} characters of text content from ${request.loadedUrl}`
+        );
+    } catch (textError) {
+        console.warn(
+            `⚠️ Failed to extract text content from ${request.loadedUrl}: ${textError instanceof Error ? textError.message : String(textError)}`
+        );
+        fullTextContent = '';
+    }
+
+    log.info(
+        `Title of ${request.loadedUrl} is '${title}' (Status: ${responseData?.status ?? 'N/A'})`
+    );
+
+    // URL-specific logging
+    logger.infoUrl(
+        currentUrl,
+        `Page processing started - Title: "${title}", Status: ${responseData?.status ?? 'N/A'}`
+    );
+
+    // Build scraped data based on configuration
+    const scrapedData: Record<string, unknown> = {};
+
+    if (config.extraction.modules.basicData) {
+        scrapedData.title = title;
+        scrapedData.url = request.loadedUrl;
+        scrapedData.fullText = fullTextContent;
+        if (config.output.formatting.includeTimestamp) {
+            scrapedData.timestamp = new Date().toISOString();
+        }
+    }
+
+    if (responseData) {
+        scrapedData.response = responseData;
+    }
+
+    // Add unique encrypted identifier based on response data
+    if (scrapedData.timestamp && responseData) {
+        scrapedData.response_id = generateUniqueId(responseData, String(scrapedData.timestamp));
+        console.log(
+            `🔑 Generated response ID: ${scrapedData.response_id} for URL: ${request.loadedUrl}`
+        );
+    } else {
+        console.log(
+            `⚠️  Could not generate response ID - timestamp: ${!!scrapedData.timestamp}, responseData: ${!!responseData}`
+        );
+    }
+
+    // Add unique identifier based on plain text content
+    if (scrapedData.timestamp && fullTextContent) {
+        scrapedData.content_id = generateContentId(
+            fullTextContent,
+            String(scrapedData.timestamp)
+        );
+        console.log(
+            `🔑 Generated content ID: ${scrapedData.content_id} for URL: ${request.loadedUrl}`
+        );
+    } else {
+        console.log(
+            `⚠️  Could not generate content ID - timestamp: ${!!scrapedData.timestamp}, fullTextContent: ${!!fullTextContent}`
+        );
+    }
+
+    // Add etag if available
+    if (responseData?.headers?.['etag']) {
+        scrapedData.etag = responseData.headers['etag'];
+    }
+
+    if (config.extraction.modules.seoTags || config.extraction.modules.specialLinks) {
+        scrapedData.seo = {
+            ...(config.extraction.modules.seoTags && { metaTags: googleMetaTags }),
+            ...(config.extraction.modules.specialLinks && {
+                specialLinks: specialLinks,
+                hasDataNoSnippet: hasDataNoSnippet,
+            }),
+        };
+    }
+
+    if (
+        config.extraction.modules.structuredData ||
+        config.extraction.modules.aiMetadata ||
+        config.extraction.modules.pageMap
+    ) {
+        scrapedData.aiMetadata = {
+            ...(config.extraction.modules.structuredData && {
+                structuredData: {
+                    jsonLd: jsonLdData,
+                    microdata: microdataItems,
+                },
+            }),
+            ...(config.extraction.modules.aiMetadata && {
+                customMetadata: {
+                    ...customMetadata,
+                    ...(config.extraction.modules.contentMetrics && contentMetrics),
+                },
+            }),
+            ...(config.extraction.modules.pageMap && { pageMap: pageMapData }),
+        };
+    }
+
+    if (config.extraction.modules.links && allLinks.length > 0) {
+        scrapedData.links = {
+            ...(config.extraction.links.categorizeByDomain && {
+                internal: internalLinks,
+                external: externalLinks,
+            }),
+            total: allLinks.length,
+        };
+    }
+
+    if (config.extraction.modules.htmlContent && htmlContent) {
+        scrapedData.htmlContent = htmlContent;
+    }
+
+    if (config.extraction.modules.images && imagesData.length > 0) {
+        scrapedData.images = imagesData;
+    }
+
+    // Save results to Apify dataset
+    if (config.output.storage.enabled) {
+        await pushData(scrapedData);
+    }
+
+    // Save data immediately to file during crawling (if enabled)
+    if (config.output.storage.realTimeStorage.enabled) {
+        try {
+            // Also append to continuous JSONL file
+            if (config.output.storage.realTimeStorage.saveJsonl) {
+                const domainJsonlFilename = `${storageService.getDomainFilename()}.jsonl`;
+                await storageService.appendToJsonl(scrapedData, domainJsonlFilename);
+            }
+        } catch (error) {
+            console.error(
+                '⚠️ Failed to save data in real-time:',
+                error instanceof Error ? error.message : String(error)
+            );
+            logger.errorUrl(currentUrl, 'Failed to save data in real-time', error);
+        }
+    }
+
+    // Log completion of page processing
+    logger.infoUrl(
+        currentUrl,
+        `Page processing completed - ${Object.keys(scrapedData).length} data fields extracted`
+    );
+
+    // Update URL status to completed in index
+    urlIndexService.updateUrlStatus(currentUrl, 'completed');
+
+    // Extract links from the current page and add them to the crawling queue
+    // Only enqueue internal links to stay within the same domain (unless in single URL mode)
+    if (!config.crawler.singleUrlMode) {
+        await enqueueLinks({
+            strategy: 'same-domain',
+            // Use transformRequestFunction to filter URLs before they're added to the queue
+            transformRequestFunction: originalRequest => {
+                try {
+                    const parsedUrl = new URL(originalRequest.url);
+                    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+                        console.log(
+                            `🚫 Excluding URL from crawling queue due to forbidden protocol: ${originalRequest.url}`
+                        );
+                        return false;
+                    }
+                    const hostname = parsedUrl.hostname;
+
+                    // Check if domain is excluded
+                    const isDomainExcluded = config.targets.excludedDomains.some(
+                        excludedDomain => {
+                            // Exact hostname match (with and without www)
+                            const normalizeHostname = (hostname: string): string =>
+                                hostname.replace(/^www\./, '');
+                            const normalizedHostname = normalizeHostname(hostname);
+                            const normalizedExcludedDomain = normalizeHostname(excludedDomain);
+
+                            const matches =
+                                hostname === excludedDomain ||
+                                normalizedHostname === normalizedExcludedDomain ||
+                                hostname.endsWith('.' + excludedDomain) ||
+                                excludedDomain.endsWith('.' + hostname);
+
+                            if (matches) {
+                                console.log(
+                                    `🔍 DEBUG: Domain excluded - hostname: ${hostname}, excludedDomain: ${excludedDomain}`
+                                );
+                            }
+
+                            return matches;
+                        }
+                    );
+
+                    // Check if path is excluded
+                    const isPathExcluded = config.targets.excludedPaths.some(excludedPath => {
+                        const urlPath = parsedUrl.pathname;
+                        // Support exact match and prefix match
+                        return urlPath === excludedPath || urlPath.startsWith(excludedPath);
+                    });
+
+                    // Check if domain is in allowed domains list
+                    const allowedDomains =
+                        config.targets.allowedDomains.length > 0
+                            ? config.targets.allowedDomains
+                            : [baseDomain];
+
+                    console.log(
+                        `🔍 DEBUG: Checking domain ${hostname} against allowedDomains: [${allowedDomains.join(', ')}]`
+                    );
+
+                    const isDomainAllowed = allowedDomains.some(allowedDomain => {
+                        const normalizeHostname = (hostname: string): string =>
+                            hostname.replace(/^www\./, '');
+                        const normalizedHostname = normalizeHostname(hostname);
+                        const normalizedAllowedDomain = normalizeHostname(allowedDomain);
+
+                        const matches =
+                            normalizedHostname === normalizedAllowedDomain ||
+                            hostname === allowedDomain ||
+                            normalizedHostname.endsWith('.' + normalizedAllowedDomain) ||
+                            normalizedAllowedDomain.endsWith('.' + normalizedHostname);
+
+                        console.log(
+                            `🔍 DEBUG: Testing ${hostname} vs ${allowedDomain} - normalized: ${normalizedHostname} vs ${normalizedAllowedDomain} - matches: ${matches}`
+                        );
+
+                        return matches;
+                    });
+
+                    console.log(
+                        `🔍 DEBUG: Final decision for ${originalRequest.url} - isDomainExcluded: ${isDomainExcluded}, isPathExcluded: ${isPathExcluded}, isDomainAllowed: ${isDomainAllowed}`
+                    );
+
+                    if (isDomainExcluded) {
+                        console.log(
+                            `🚫 Excluding URL from crawling queue: ${originalRequest.url} (domain: ${hostname}) - REASON: Domain is in excludedDomains list`
+                        );
+                        return false; // Return false to skip this URL
+                    }
+
+                    if (isPathExcluded) {
+                        console.log(
+                            `🚫 Excluding URL from crawling queue: ${originalRequest.url} (path: ${parsedUrl.pathname}) - REASON: Path is in excludedPaths list`
+                        );
+                        return false; // Return false to skip this URL
+                    }
+
+                    if (!isDomainAllowed) {
+                        console.log(
+                            `🌐 Excluding domain not in allowed list: ${originalRequest.url} (domain: ${hostname}) - REASON: Domain is not in allowedDomains list`
+                        );
+                        return false; // Return false to skip this URL
+                    }
+
+                    // Add URL to index when it's accepted for crawling
+                    urlIndexService.addUrl(originalRequest.url);
+
+                    return originalRequest; // Return the original request to include it
+                } catch {
+                    console.log(
+                        `⚠️ Invalid URL in crawling queue filter: ${originalRequest.url}`
+                    );
+                    return false; // Return false to skip invalid URLs
+                }
+            },
+        });
+    } else {
+        console.log(`🎯 Single URL mode: Skipping link discovery for ${request.loadedUrl}`);
+    }
+
+    // Record request for rate limiting (after processing)
+    if (rateLimitingService) {
+        const success = !response || (response.status() >= 200 && response.status() < 400);
+        rateLimitingService.recordRequest(currentUrl, success, response?.status());
+
+        // Log rate limiting status every 10 requests
+        if (pagesProcessed % 10 === 0) {
+            console.log(rateLimitingService.getStatusSummary());
+        }
+    }
+
+    // Add random delay between requests
+    if (config.crawler.requestDelayMin && config.crawler.requestDelayMax) {
+        const delay = getRandomDelay();
+        console.log(`💤 Random delay: ${delay}ms before next request`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+};
+
+// Use the failedRequestHandler to handle failed requests.
+const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
+    const currentUrl = request.loadedUrl || request.url;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    console.error(`❌ Failed to process URL: ${currentUrl}`, errorMessage);
+
+    // Check for user-agent function error and pause browser
+    if (errorMessage.includes('page.setUserAgent is not a function')) {
+        console.error(
+            `🚨 User-Agent function error detected - keeping browser open for 60 seconds for inspection`
+        );
+        console.log(`⏰ Browser will remain open for debugging - waiting 60 seconds...`);
+        await new Promise(resolve => setTimeout(resolve, 60000));
+        console.log(`✅ 60-second debugging pause completed`);
+    }
+
+    // Check if error is 403-related and rotate user-agent
+    if (errorMessage.includes('403') || errorMessage.includes('blocked')) {
+        consecutive403Errors++;
+        console.warn(
+            `🚫 Request blocked (${consecutive403Errors} consecutive) - ${errorMessage}`
+        );
+
+        if (consecutive403Errors >= 3 && Date.now() - lastUserAgentRotation > 60000) {
+            globalUserAgentRotator.getNextUserAgent();
+            console.log(`🔄 Rotating User-Agent due to repeated request failures`);
+            lastUserAgentRotation = Date.now();
+            consecutive403Errors = 0;
+        }
+    }
+
+    // Update URL index with failed status
+    urlIndexService.updateUrlStatus(currentUrl, 'failed', undefined, errorMessage);
+
+    // Record failed request for rate limiting
+    if (rateLimitingService) {
+        rateLimitingService.recordRequest(currentUrl, false);
+    }
+
+    logger.errorUrl(currentUrl, 'Request failed', error);
+    errorsEncountered++;
+};
+
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
 const crawler = new PlaywrightCrawler({
@@ -489,772 +1316,8 @@ const crawler = new PlaywrightCrawler({
         },
     ],
 
-    // Use the requestHandler to process each of the crawled pages.
-    async requestHandler({ request, page, enqueueLinks, log, pushData, response }): Promise<void> {
-        const currentUrl = request.loadedUrl || request.url;
-
-        // Check rate limiting before processing
-        if (rateLimitingService) {
-            const rateLimitStatus = rateLimitingService.canMakeRequest();
-
-            if (rateLimitStatus.isBlocked) {
-                const delayMs = rateLimitStatus.nextAllowedTime - Date.now();
-                const delaySec = Math.ceil(delayMs / 1000);
-
-                console.log(
-                    `⏳ Rate limit reached - waiting ${delaySec} seconds before processing ${currentUrl}`
-                );
-                console.log(
-                    `📊 Blocking rule: ${rateLimitStatus.blockingRule?.description ?? 'Unknown rule'}`
-                );
-
-                await Actor.setStatusMessage(`Rate limited - waiting ${delaySec}s...`);
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-
-                console.log(`✅ Rate limit wait completed - proceeding with ${currentUrl}`);
-            }
-        }
-
-        // Update URL status to processing
-        urlIndexService.updateUrlStatus(currentUrl, 'processing');
-
-        // Check if URL was already crawled
-        if (crawlingMap.has(currentUrl)) {
-            const existingEntry = crawlingMap.get(currentUrl);
-            if (!existingEntry) return;
-            existingEntry.crawlCount++;
-            console.log(
-                `🔄 URL already crawled ${existingEntry.crawlCount} times: ${currentUrl} (Status: ${existingEntry.status})`
-            );
-
-            // Skip if already successfully crawled
-            if (existingEntry.status && existingEntry.status >= 200 && existingEntry.status < 400) {
-                console.log(`✅ Skipping already successfully crawled URL: ${currentUrl}`);
-                return;
-            }
-        }
-
-        pagesProcessed++;
-        const progress = config.crawler.maxRequestsPerCrawl
-            ? `${pagesProcessed}/${config.crawler.maxRequestsPerCrawl}`
-            : `${pagesProcessed}`;
-
-        await Actor.setStatusMessage(`Processing page ${progress}: ${currentUrl}`);
-
-        // Different scrolling behavior based on headless mode
-        if (!config.crawler.headless) {
-            // Non-headless mode: Wait for full page load then scroll to middle
-            console.log(
-                `🌐 Page loaded: ${request.loadedUrl} - waiting for full load then scrolling to middle...`
-            );
-
-            // Wait for page to be fully loaded (additional time for non-headless)
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            console.log('⏰ Waited 3 seconds for full page load...');
-
-            try {
-                await page.evaluate((): Promise<void> => {
-                    return new Promise<void>(resolve => {
-                        // eslint-disable-next-line no-undef
-                        const scrollHeight = document.body.scrollHeight;
-                        const middlePosition = scrollHeight / 2;
-
-                        console.log(
-                            `📜 Scrolling to middle of page (${Math.round(middlePosition)}px)...`
-                        );
-
-                        // Smooth scroll to middle
-                        // eslint-disable-next-line no-undef
-                        window.scrollTo({
-                            top: middlePosition,
-                            behavior: 'smooth',
-                        });
-
-                        // Wait for smooth scroll to complete
-                        setTimeout(() => {
-                            console.log(
-                                `📜 Reached middle of page, staying here for inspection...`
-                            );
-                            resolve();
-                        }, 2000);
-                    });
-                });
-
-                // Additional wait time for inspection in visible mode
-                const waitTime = 5000 + Math.random() * 3000; // 5-8 seconds
-                console.log(
-                    `📜 Staying at middle position for ${Math.round(waitTime / 1000)} seconds for inspection...`
-                );
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                console.log('⏰ Continuing with data extraction...');
-            } catch (scrollError) {
-                console.warn(
-                    `⚠️  Middle scrolling failed for ${request.loadedUrl}: ${scrollError instanceof Error ? scrollError.message : String(scrollError)}`
-                );
-                console.log('⏰ Continuing with data extraction without scrolling...');
-            }
-        } else {
-            // Headless mode: Original bottom scrolling behavior
-            console.log(`🌐 Page loaded: ${request.loadedUrl} - scrolling to bottom...`);
-
-            try {
-                await page.evaluate((): Promise<void> => {
-                    return new Promise<void>(resolve => {
-                        let totalHeight = 0;
-                        const baseDistance = 50; // Base scroll distance
-                        const baseDelay = 800; // Base delay between scrolls (800ms)
-                        let scrollCount = 0;
-
-                        const scrollStep = (): void => {
-                            // eslint-disable-next-line no-undef
-                            const scrollHeight = document.body.scrollHeight;
-
-                            // Random variations to mimic human scrolling
-                            const randomDistance = baseDistance + Math.random() * 30 - 15; // 35-65px
-                            const randomDelay = baseDelay + Math.random() * 400 - 200; // 600-1000ms
-
-                            // eslint-disable-next-line no-undef
-                            window.scrollBy(0, randomDistance);
-                            totalHeight += randomDistance;
-                            scrollCount++;
-
-                            // Log progress every 5 scrolls
-                            if (scrollCount % 5 === 0) {
-                                console.log(
-                                    `📜 Scroll progress: ${scrollCount} scrolls, ${Math.round(totalHeight)}px scrolled`
-                                );
-                            }
-
-                            // Add longer breaks every 15 scrolls (more human-like)
-                            if (scrollCount % 15 === 0) {
-                                console.log(
-                                    `⏸️  Taking a 3-second break after ${scrollCount} scrolls...`
-                                );
-                                setTimeout(() => {
-                                    if (totalHeight >= scrollHeight) {
-                                        console.log(`📜 Reached bottom, scrolling back to top...`);
-                                        // eslint-disable-next-line no-undef
-                                        window.scrollTo({ top: 0, behavior: 'smooth' });
-                                        setTimeout(resolve, 1500); // Wait for smooth scroll
-                                    } else {
-                                        setTimeout(scrollStep, randomDelay);
-                                    }
-                                }, 3000);
-                            } else {
-                                if (totalHeight >= scrollHeight) {
-                                    console.log(`📜 Reached bottom, scrolling back to top...`);
-                                    // eslint-disable-next-line no-undef
-                                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                                    setTimeout(resolve, 1500); // Wait for smooth scroll
-                                } else {
-                                    setTimeout(scrollStep, randomDelay);
-                                }
-                            }
-                        };
-
-                        // Start scrolling
-                        scrollStep();
-                    });
-                });
-            } catch (scrollError) {
-                console.warn(
-                    `⚠️  Scrolling failed for ${request.loadedUrl}: ${scrollError instanceof Error ? scrollError.message : String(scrollError)}`
-                );
-                console.log('⏰ Continuing with data extraction without scrolling...');
-            }
-        }
-
-        // Add human-like mouse movement (for both modes)
-        try {
-            await page.mouse.move(Math.random() * 800 + 100, Math.random() * 600 + 100);
-            await page.mouse.move(Math.random() * 800 + 100, Math.random() * 600 + 100);
-        } catch (mouseError) {
-            console.warn(
-                `⚠️  Mouse movement failed: ${mouseError instanceof Error ? mouseError.message : String(mouseError)}`
-            );
-        }
-
-        // Add this crawled URL to the sitemap collection
-        allCrawledUrls.add(request.loadedUrl || request.url);
-
-        // Update base domain if this is the first request and we got redirected
-        if (pagesProcessed === 1 && request.loadedUrl) {
-            const actualDomain = new URL(request.loadedUrl).hostname;
-            if (actualDomain !== baseDomain) {
-                console.log(
-                    `🔄 Domain updated from ${baseDomain} to ${actualDomain} (redirect detected)`
-                );
-                baseDomain = actualDomain;
-            }
-        }
-
-        const title = await page.title();
-
-        // Log crawler progress every 10 pages
-        if (pagesProcessed % 10 === 0) {
-            logger.crawlerStats({
-                pagesProcessed,
-                totalUrls: config.crawler.maxRequestsPerCrawl || totalUrlsDiscovered,
-                errorsEncountered,
-                currentUrl: request.loadedUrl,
-            });
-        }
-
-        // Get response information (if enabled)
-        const responseData = config.extraction.modules.responseData
-            ? {
-                  status: response?.status() ?? null,
-                  statusText: response?.statusText() ?? null,
-                  headers: response?.headers() ?? {},
-                  url: request.loadedUrl,
-              }
-            : undefined;
-
-        // Update crawling map with current URL status
-        const currentStatus = response?.status() ?? null;
-        const currentStatusText = response?.statusText() ?? null;
-        crawlingMap.set(currentUrl, {
-            status: currentStatus,
-            statusText: currentStatusText,
-            timestamp: new Date().toISOString(),
-            crawlCount: crawlingMap.has(currentUrl)
-                ? (crawlingMap.get(currentUrl)?.crawlCount ?? 0) + 1
-                : 1,
-        });
-
-        console.log(`📊 Status tracking: ${currentUrl} → ${currentStatus} (${currentStatusText})`);
-
-        // Check for blocked or redirected responses
-        if (response?.status() && (response.status() >= 400 || response.status() === 302)) {
-            const statusCode = response.status();
-            const statusText = response.statusText();
-
-            if (statusCode === 403) {
-                consecutive403Errors++;
-                console.warn(
-                    `🚫 Access denied (403) for ${request.loadedUrl} - likely blocked by anti-bot protection (${consecutive403Errors} consecutive)`
-                );
-
-                // Rotate user-agent after 3 consecutive 403s
-                if (consecutive403Errors >= 3 && Date.now() - lastUserAgentRotation > 60000) {
-                    const newUserAgent = globalUserAgentRotator.getNextUserAgent();
-                    console.log(`🔄 Rotating User-Agent due to repeated 403 errors`);
-
-                    // Update the user-agent for future requests
-                    await page.setExtraHTTPHeaders({
-                        'User-Agent': newUserAgent,
-                    });
-
-                    lastUserAgentRotation = Date.now();
-                    consecutive403Errors = 0; // Reset counter after rotation
-                }
-
-                // If running in visible browser mode, wait 20 seconds before next URL
-                if (!config.crawler.headless) {
-                    console.log(
-                        `⏰ Headless mode is OFF - waiting 20 seconds before processing next URL to avoid detection...`
-                    );
-                    await new Promise(resolve => setTimeout(resolve, 20000));
-                    console.log(`✅ 20-second wait completed, continuing to next URL...`);
-                }
-            } else if (statusCode === 404) {
-                // Reset 403 counter on successful requests
-                consecutive403Errors = 0;
-                console.warn(`❌ Page not found (404) for ${request.loadedUrl}`);
-            } else if (statusCode === 302) {
-                console.warn(
-                    `🔄 Redirected (302) for ${request.loadedUrl} - possible login required`
-                );
-            } else {
-                console.warn(`⚠️  HTTP ${statusCode} ${statusText} for ${request.loadedUrl}`);
-            }
-
-            // Continue with extraction but with limited data
-            console.log('📊 Continuing with limited data extraction...');
-        }
-
-        // Extract all links (if enabled)
-        let allLinks: Array<{
-            text: string;
-            href: string;
-            rel: string;
-            link_title: string;
-        }> = [];
-
-        // Wait for page to be fully loaded before extracting links
-        await page.waitForLoadState('networkidle');
-        let internalLinks: Array<{
-            text: string;
-            href: string;
-            rel: string;
-            link_title: string;
-        }> = [];
-        let externalLinks: Array<{
-            text: string;
-            href: string;
-            rel: string;
-            link_title: string;
-        }> = [];
-
-        if (config.extraction.modules.links) {
-            console.log(`🔍 Extracting links from: ${request.loadedUrl}`);
-
-            allLinks = await page.$$eval('a[href]', anchors =>
-                anchors.map(a => {
-                    const anchor = a as HTMLAnchorElement;
-                    return {
-                        text: anchor.textContent?.trim() ?? '',
-                        href: anchor.href,
-                        // Only extract attributes if configured
-                        // Attributes can be added here if needed
-                        rel: anchor.rel,
-                        link_title: anchor.title || '',
-                    };
-                })
-            );
-
-            console.log(`🔗 Found ${allLinks.length} total links on page`);
-            logger.infoUrl(currentUrl, `Found ${allLinks.length} total links on page`);
-
-            // Categorize links if enabled
-            console.log(
-                `🔧 categorizeByDomain setting: ${config.extraction.links.categorizeByDomain}`
-            );
-            if (config.extraction.links.categorizeByDomain) {
-                const categorized = categorizeLinks(
-                    allLinks,
-                    baseDomain,
-                    config.targets.excludedDomains,
-                    config.targets.excludedPaths,
-                    config.targets.allowedDomains
-                );
-                internalLinks = categorized.internal;
-                externalLinks = categorized.external;
-
-                // Collect internal links for sitemap generation
-                internalLinks.forEach(link => {
-                    if (link.href && typeof link.href === 'string') {
-                        allInternalLinksForSitemap.add(link.href);
-                    }
-                });
-
-                // Update statistics
-                console.log(
-                    `📊 Page stats: ${internalLinks.length} internal, ${externalLinks.length} external links`
-                );
-                seoDataExtracted.totalInternalLinks += internalLinks.length;
-                seoDataExtracted.totalExternalLinks += externalLinks.length;
-                console.log(
-                    `📈 Running totals: ${seoDataExtracted.totalInternalLinks} internal, ${seoDataExtracted.totalExternalLinks} external`
-                );
-            }
-        }
-
-        // Extract SEO metadata (if enabled)
-        let googleMetaTags = {};
-        let specialLinks = {};
-        let hasDataNoSnippet = false;
-
-        if (config.extraction.modules.seoTags) {
-            googleMetaTags = await extractGoogleMetaTags(page);
-            seoDataExtracted.totalMetaTags += Object.keys(googleMetaTags).length;
-        }
-
-        if (config.extraction.modules.specialLinks) {
-            specialLinks = await extractSpecialLinks(page);
-            hasDataNoSnippet = await detectDataNoSnippet(page);
-        }
-
-        // Extract AI-specific metadata (if enabled)
-        let jsonLdData: unknown[] = [];
-        let microdataItems: unknown[] = [];
-        let customMetadata = {};
-        let pageMapData = {};
-        let contentMetrics = {};
-
-        if (config.extraction.modules.structuredData) {
-            jsonLdData = await extractJsonLdStructuredData(page);
-            microdataItems = await extractMicrodata(page);
-            seoDataExtracted.totalStructuredData += jsonLdData.length + microdataItems.length;
-        }
-
-        if (config.extraction.modules.aiMetadata) {
-            customMetadata = await extractCustomMetadata(page);
-        }
-
-        if (config.extraction.modules.pageMap) {
-            pageMapData = await extractPageMapData(page);
-        }
-
-        if (config.extraction.modules.contentMetrics) {
-            contentMetrics = await extractContentMetrics(page);
-        }
-
-        // Extract HTML content (full page + main article body)
-        let htmlContent: { full: string; main: string; mainSelector: string } | undefined;
-        if (config.extraction.modules.htmlContent) {
-            htmlContent = await extractHtmlContent(page);
-            console.log(
-                `🧩 HTML content extracted: full=${htmlContent.full.length} chars, main=${htmlContent.main.length} chars (selector: ${htmlContent.mainSelector})`
-            );
-        }
-
-        // Extract image metadata
-        let imagesData: unknown[] = [];
-        if (config.extraction.modules.images) {
-            imagesData = await extractImages(page);
-            console.log(`🖼️  Extracted ${imagesData.length} images from ${request.loadedUrl}`);
-        }
-
-        // Extract full text content from the page (without HTML code)
-        let fullTextContent = '';
-        try {
-            fullTextContent = await page.evaluate((): string => {
-                // Remove script and style elements completely
-                // eslint-disable-next-line no-undef
-                const scripts = document.querySelectorAll('script, style, noscript');
-                scripts.forEach(element => element.remove());
-
-                // Get text content from body, removing extra whitespace
-
-                const bodyText =
-                    // eslint-disable-next-line no-undef
-                    document.body?.innerText ?? document.documentElement.innerText ?? '';
-
-                // Clean up the text: normalize whitespace, remove extra line breaks
-                return bodyText
-                    .replace(/\s+/g, ' ') // Replace multiple spaces with single space
-                    .replace(/\n\s*\n/g, '\n') // Replace multiple line breaks with single line break
-                    .trim(); // Remove leading/trailing whitespace
-            });
-
-            console.log(
-                `📄 Extracted ${fullTextContent.length} characters of text content from ${request.loadedUrl}`
-            );
-        } catch (textError) {
-            console.warn(
-                `⚠️ Failed to extract text content from ${request.loadedUrl}: ${textError instanceof Error ? textError.message : String(textError)}`
-            );
-            fullTextContent = '';
-        }
-
-        log.info(
-            `Title of ${request.loadedUrl} is '${title}' (Status: ${responseData?.status ?? 'N/A'})`
-        );
-
-        // URL-specific logging
-        logger.infoUrl(
-            currentUrl,
-            `Page processing started - Title: "${title}", Status: ${responseData?.status ?? 'N/A'}`
-        );
-
-        // Build scraped data based on configuration
-        const scrapedData: Record<string, unknown> = {};
-
-        if (config.extraction.modules.basicData) {
-            scrapedData.title = title;
-            scrapedData.url = request.loadedUrl;
-            scrapedData.fullText = fullTextContent;
-            if (config.output.formatting.includeTimestamp) {
-                scrapedData.timestamp = new Date().toISOString();
-            }
-        }
-
-        if (responseData) {
-            scrapedData.response = responseData;
-        }
-
-        // Add unique encrypted identifier based on response data
-        if (scrapedData.timestamp && responseData) {
-            scrapedData.response_id = generateUniqueId(responseData, String(scrapedData.timestamp));
-            console.log(
-                `🔑 Generated response ID: ${scrapedData.response_id} for URL: ${request.loadedUrl}`
-            );
-        } else {
-            console.log(
-                `⚠️  Could not generate response ID - timestamp: ${!!scrapedData.timestamp}, responseData: ${!!responseData}`
-            );
-        }
-
-        // Add unique identifier based on plain text content
-        if (scrapedData.timestamp && fullTextContent) {
-            scrapedData.content_id = generateContentId(
-                fullTextContent,
-                String(scrapedData.timestamp)
-            );
-            console.log(
-                `🔑 Generated content ID: ${scrapedData.content_id} for URL: ${request.loadedUrl}`
-            );
-        } else {
-            console.log(
-                `⚠️  Could not generate content ID - timestamp: ${!!scrapedData.timestamp}, fullTextContent: ${!!fullTextContent}`
-            );
-        }
-
-        // Add etag if available
-        if (responseData?.headers?.['etag']) {
-            scrapedData.etag = responseData.headers['etag'];
-        }
-
-        if (config.extraction.modules.seoTags || config.extraction.modules.specialLinks) {
-            scrapedData.seo = {
-                ...(config.extraction.modules.seoTags && { metaTags: googleMetaTags }),
-                ...(config.extraction.modules.specialLinks && {
-                    specialLinks: specialLinks,
-                    hasDataNoSnippet: hasDataNoSnippet,
-                }),
-            };
-        }
-
-        if (
-            config.extraction.modules.structuredData ||
-            config.extraction.modules.aiMetadata ||
-            config.extraction.modules.pageMap
-        ) {
-            scrapedData.aiMetadata = {
-                ...(config.extraction.modules.structuredData && {
-                    structuredData: {
-                        jsonLd: jsonLdData,
-                        microdata: microdataItems,
-                    },
-                }),
-                ...(config.extraction.modules.aiMetadata && {
-                    customMetadata: {
-                        ...customMetadata,
-                        ...(config.extraction.modules.contentMetrics && contentMetrics),
-                    },
-                }),
-                ...(config.extraction.modules.pageMap && { pageMap: pageMapData }),
-            };
-        }
-
-        if (config.extraction.modules.links && allLinks.length > 0) {
-            scrapedData.links = {
-                ...(config.extraction.links.categorizeByDomain && {
-                    internal: internalLinks,
-                    external: externalLinks,
-                }),
-                total: allLinks.length,
-            };
-        }
-
-        if (config.extraction.modules.htmlContent && htmlContent) {
-            scrapedData.htmlContent = htmlContent;
-        }
-
-        if (config.extraction.modules.images && imagesData.length > 0) {
-            scrapedData.images = imagesData;
-        }
-
-        // Save results to Apify dataset
-        if (config.output.storage.enabled) {
-            await pushData(scrapedData);
-        }
-
-        // Save data immediately to file during crawling (if enabled)
-        if (config.output.storage.realTimeStorage.enabled) {
-            try {
-                // Also append to continuous JSONL file
-                if (config.output.storage.realTimeStorage.saveJsonl) {
-                    const domainJsonlFilename = `${storageService.getDomainFilename()}.jsonl`;
-                    await storageService.appendToJsonl(scrapedData, domainJsonlFilename);
-                }
-            } catch (error) {
-                console.error(
-                    '⚠️ Failed to save data in real-time:',
-                    error instanceof Error ? error.message : String(error)
-                );
-                logger.errorUrl(currentUrl, 'Failed to save data in real-time', error);
-            }
-        }
-
-        // Log completion of page processing
-        logger.infoUrl(
-            currentUrl,
-            `Page processing completed - ${Object.keys(scrapedData).length} data fields extracted`
-        );
-
-        // Extract links from the current page and add them to the crawling queue
-        // Only enqueue internal links to stay within the same domain (unless in single URL mode)
-        if (!config.crawler.singleUrlMode) {
-            await enqueueLinks({
-                strategy: 'same-domain',
-                // Use transformRequestFunction to filter URLs before they're added to the queue
-                transformRequestFunction: originalRequest => {
-                    try {
-                        const parsedUrl = new URL(originalRequest.url);
-                        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-                            console.log(
-                                `🚫 Excluding URL from crawling queue due to forbidden protocol: ${originalRequest.url}`
-                            );
-                            return false;
-                        }
-                        const hostname = parsedUrl.hostname;
-
-                        // Check if domain is excluded
-                        const isDomainExcluded = config.targets.excludedDomains.some(
-                            excludedDomain => {
-                                // Exact hostname match (with and without www)
-                                const normalizeHostname = (hostname: string): string =>
-                                    hostname.replace(/^www\./, '');
-                                const normalizedHostname = normalizeHostname(hostname);
-                                const normalizedExcludedDomain = normalizeHostname(excludedDomain);
-
-                                const matches =
-                                    hostname === excludedDomain ||
-                                    normalizedHostname === normalizedExcludedDomain ||
-                                    hostname.endsWith('.' + excludedDomain) ||
-                                    excludedDomain.endsWith('.' + hostname);
-
-                                if (matches) {
-                                    console.log(
-                                        `🔍 DEBUG: Domain excluded - hostname: ${hostname}, excludedDomain: ${excludedDomain}`
-                                    );
-                                }
-
-                                return matches;
-                            }
-                        );
-
-                        // Check if path is excluded
-                        const isPathExcluded = config.targets.excludedPaths.some(excludedPath => {
-                            const urlPath = parsedUrl.pathname;
-                            // Support exact match and prefix match
-                            return urlPath === excludedPath || urlPath.startsWith(excludedPath);
-                        });
-
-                        // Check if domain is in allowed domains list
-                        const allowedDomains =
-                            config.targets.allowedDomains.length > 0
-                                ? config.targets.allowedDomains
-                                : [baseDomain];
-
-                        console.log(
-                            `🔍 DEBUG: Checking domain ${hostname} against allowedDomains: [${allowedDomains.join(', ')}]`
-                        );
-
-                        const isDomainAllowed = allowedDomains.some(allowedDomain => {
-                            const normalizeHostname = (hostname: string): string =>
-                                hostname.replace(/^www\./, '');
-                            const normalizedHostname = normalizeHostname(hostname);
-                            const normalizedAllowedDomain = normalizeHostname(allowedDomain);
-
-                            const matches =
-                                normalizedHostname === normalizedAllowedDomain ||
-                                hostname === allowedDomain ||
-                                normalizedHostname.endsWith('.' + normalizedAllowedDomain) ||
-                                normalizedAllowedDomain.endsWith('.' + normalizedHostname);
-
-                            console.log(
-                                `🔍 DEBUG: Testing ${hostname} vs ${allowedDomain} - normalized: ${normalizedHostname} vs ${normalizedAllowedDomain} - matches: ${matches}`
-                            );
-
-                            return matches;
-                        });
-
-                        console.log(
-                            `🔍 DEBUG: Final decision for ${originalRequest.url} - isDomainExcluded: ${isDomainExcluded}, isPathExcluded: ${isPathExcluded}, isDomainAllowed: ${isDomainAllowed}`
-                        );
-
-                        if (isDomainExcluded) {
-                            console.log(
-                                `🚫 Excluding URL from crawling queue: ${originalRequest.url} (domain: ${hostname}) - REASON: Domain is in excludedDomains list`
-                            );
-                            return false; // Return false to skip this URL
-                        }
-
-                        if (isPathExcluded) {
-                            console.log(
-                                `🚫 Excluding URL from crawling queue: ${originalRequest.url} (path: ${parsedUrl.pathname}) - REASON: Path is in excludedPaths list`
-                            );
-                            return false; // Return false to skip this URL
-                        }
-
-                        if (!isDomainAllowed) {
-                            console.log(
-                                `🌐 Excluding domain not in allowed list: ${originalRequest.url} (domain: ${hostname}) - REASON: Domain is not in allowedDomains list`
-                            );
-                            return false; // Return false to skip this URL
-                        }
-
-                        // Add URL to index when it's accepted for crawling
-                        urlIndexService.addUrl(originalRequest.url);
-
-                        return originalRequest; // Return the original request to include it
-                    } catch {
-                        console.log(
-                            `⚠️ Invalid URL in crawling queue filter: ${originalRequest.url}`
-                        );
-                        return false; // Return false to skip invalid URLs
-                    }
-                },
-            });
-        } else {
-            console.log(`🎯 Single URL mode: Skipping link discovery for ${request.loadedUrl}`);
-        }
-
-        // Record request for rate limiting (after processing)
-        if (rateLimitingService) {
-            const success = !response || (response.status() >= 200 && response.status() < 400);
-            rateLimitingService.recordRequest(currentUrl, success, response?.status());
-
-            // Log rate limiting status every 10 requests
-            if (pagesProcessed % 10 === 0) {
-                console.log(rateLimitingService.getStatusSummary());
-            }
-        }
-
-        // Add random delay between requests
-        if (config.crawler.requestDelayMin && config.crawler.requestDelayMax) {
-            const delay = getRandomDelay();
-            console.log(`💤 Random delay: ${delay}ms before next request`);
-            await new Promise(resolve => setTimeout(resolve, delay));
-        }
-    },
-
-    // Handle failed requests
-    async failedRequestHandler({ request, error }): Promise<void> {
-        const currentUrl = request.loadedUrl || request.url;
-        const errorMessage = error instanceof Error ? error.message : String(error);
-
-        console.error(`❌ Failed to process URL: ${currentUrl}`, errorMessage);
-
-        // Check for user-agent function error and pause browser
-        if (errorMessage.includes('page.setUserAgent is not a function')) {
-            console.error(
-                `🚨 User-Agent function error detected - keeping browser open for 60 seconds for inspection`
-            );
-            console.log(`⏰ Browser will remain open for debugging - waiting 60 seconds...`);
-            await new Promise(resolve => setTimeout(resolve, 60000));
-            console.log(`✅ 60-second debugging pause completed`);
-        }
-
-        // Check if error is 403-related and rotate user-agent
-        if (errorMessage.includes('403') || errorMessage.includes('blocked')) {
-            consecutive403Errors++;
-            console.warn(
-                `🚫 Request blocked (${consecutive403Errors} consecutive) - ${errorMessage}`
-            );
-
-            if (consecutive403Errors >= 3 && Date.now() - lastUserAgentRotation > 60000) {
-                globalUserAgentRotator.getNextUserAgent();
-                console.log(`🔄 Rotating User-Agent due to repeated request failures`);
-                lastUserAgentRotation = Date.now();
-                consecutive403Errors = 0;
-            }
-        }
-
-        // Update URL index with failed status
-        urlIndexService.updateUrlStatus(currentUrl, 'failed', undefined, errorMessage);
-
-        // Record failed request for rate limiting
-        if (rateLimitingService) {
-            rateLimitingService.recordRequest(currentUrl, false);
-        }
-
-        logger.errorUrl(currentUrl, 'Request failed', error);
-        errorsEncountered++;
-    },
+    requestHandler,
+    failedRequestHandler,
 });
 
 await Actor.setStatusMessage('Preparing crawler and discovering URLs...');
@@ -1262,36 +1325,6 @@ console.log(`🕷️ Starting crawler with base domain: ${baseDomain}`);
 console.log(
     `🤖 Initial User-Agent: ${globalUserAgentRotator.getCurrentUserAgent().substring(0, 80)}...`
 );
-
-// Track statistics
-let totalUrlsDiscovered = 0;
-let pagesProcessed = 0;
-let errorsEncountered = 0;
-let hasRetried403WithHeadlessFalse = false;
-let consecutive403Errors = 0;
-let lastUserAgentRotation = 0;
-const seoDataExtracted = {
-    totalMetaTags: 0,
-    totalStructuredData: 0,
-    totalInternalLinks: 0,
-    totalExternalLinks: 0,
-};
-
-// Crawling map to prevent duplicate URL crawling and track status codes
-const crawlingMap = new Map<
-    string,
-    {
-        status: number | null;
-        statusText: string | null;
-        timestamp: string;
-        crawlCount: number;
-    }
->();
-
-// Collect all internal links for sitemap generation
-const allInternalLinksForSitemap = new Set<string>();
-// Also track all crawled URLs for sitemap
-const allCrawledUrls = new Set<string>();
 
 // Helper function to load previous URL index for incremental crawling
 async function loadPreviousUrlIndex(domain: string, date: string): Promise<Record<string, any>> {
@@ -1496,12 +1529,37 @@ if (config.targets.htmlSitemapUrl && !config.crawler.singleUrlMode) {
 console.log(`📋 Adding ${urlsToAdd.length} URLs to index...`);
 urlIndexService.addUrls(urlsToAdd);
 
-await Actor.setStatusMessage(`Starting crawl of ${totalUrlsDiscovered} URLs...`);
+// Load any pending/processing URLs from the existing index to resume/crawl them
+if (!config.crawler.singleUrlMode) {
+    const pendingUrlsFromIndex = urlIndexService.getPendingUrls().map(entry => entry.url);
+    const processingUrlsFromIndex = urlIndexService.getUrlsByStatus('processing').map(entry => entry.url);
+    const resumeUrls = [...pendingUrlsFromIndex, ...processingUrlsFromIndex];
+
+    if (resumeUrls.length > 0) {
+        console.log(`📋 Found ${resumeUrls.length} pending/incomplete URLs in the index. Adding them to the crawl queue.`);
+        const existingSet = new Set(urlsToAdd);
+        let addedCount = 0;
+        for (const url of resumeUrls) {
+            if (!existingSet.has(url)) {
+                urlsToAdd.push(url);
+                existingSet.add(url);
+                addedCount++;
+            }
+        }
+        totalUrlsDiscovered += addedCount;
+    }
+}
+
+// Filter out already completed URLs from the list of URLs to crawl
+const completedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
+const urlsToRun = urlsToAdd.filter(url => !completedUrls.has(url));
+
+await Actor.setStatusMessage(`Starting crawl of ${urlsToRun.length} URLs (excluding ${completedUrls.size} already completed)...`);
 
 // Note: Progress tracking is handled within the main request handler
 
 try {
-    await crawler.run(urlsToAdd);
+    await crawler.run(urlsToRun);
 
     // Check if we had no successful pages but had blocking - retry with headless=false
     if (pagesProcessed === 0 && config.crawler.headless && !hasRetried403WithHeadlessFalse) {
@@ -1529,8 +1587,8 @@ try {
                 },
             },
 
-            // TODO: Extract request handler to a reusable function
-            // requestHandler: crawler.requestHandler, // Protected property access issue
+            requestHandler,
+            failedRequestHandler,
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
@@ -1556,7 +1614,9 @@ try {
         console.log('🔄 Retrying crawl with visible browser (headless=false)...');
         await Actor.setStatusMessage('Retrying with visible browser to bypass bot detection...');
 
-        await retrycrawler.run(urlsToAdd);
+        const retryCompletedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
+        const retryUrlsToRun = urlsToAdd.filter(url => !retryCompletedUrls.has(url));
+        await retrycrawler.run(retryUrlsToRun);
         console.log('✅ Retry with headless=false completed!');
     }
 
@@ -1666,8 +1726,8 @@ try {
                 },
             },
 
-            // TODO: Extract request handler to a reusable function
-            // requestHandler: crawler.requestHandler, // Protected property access issue
+            requestHandler,
+            failedRequestHandler,
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
@@ -1694,7 +1754,9 @@ try {
         await Actor.setStatusMessage('Retrying with visible browser to bypass bot detection...');
 
         try {
-            await retrycrawler.run(urlsToAdd);
+            const retryCompletedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
+            const retryUrlsToRun = urlsToRun.filter(url => !retryCompletedUrls.has(url));
+            await retrycrawler.run(retryUrlsToRun);
             console.log('✅ Retry with headless=false was successful!');
 
             // End logging session

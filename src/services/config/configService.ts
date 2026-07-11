@@ -202,9 +202,21 @@ export class ConfigService {
                 .filter(Boolean);
 
         if (startUrls) config.targets.startUrls = splitTrim(startUrls);
-        if (allowedDomains) config.targets.allowedDomains = splitTrim(allowedDomains);
-        if (excludedDomains) config.targets.excludedDomains = splitTrim(excludedDomains);
-        if (excludedPaths) config.targets.excludedPaths = splitTrim(excludedPaths);
+        if (allowedDomains) {
+            config.targets.allowedDomains = Array.from(
+                new Set([...config.targets.allowedDomains, ...splitTrim(allowedDomains)])
+            );
+        }
+        if (excludedDomains) {
+            config.targets.excludedDomains = Array.from(
+                new Set([...config.targets.excludedDomains, ...splitTrim(excludedDomains)])
+            );
+        }
+        if (excludedPaths) {
+            config.targets.excludedPaths = Array.from(
+                new Set([...config.targets.excludedPaths, ...splitTrim(excludedPaths)])
+            );
+        }
         if (sitemapDiscovery !== undefined)
             config.targets.sitemapDiscovery = sitemapDiscovery === 'true';
 

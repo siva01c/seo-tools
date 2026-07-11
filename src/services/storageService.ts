@@ -18,9 +18,13 @@ export class StorageService {
         return StorageService.instance;
     }
 
-    public initializeStorage(targetUrl: string, basePath: string = './storage'): IStorageConfig {
+    public initializeStorage(
+        targetUrl: string,
+        basePath: string = './storage',
+        customDateFolder?: string | null
+    ): IStorageConfig {
         const domain = this.extractDomain(targetUrl);
-        const dateFolder = this.getCurrentDateFolder();
+        const dateFolder = customDateFolder || this.getCurrentDateFolder();
 
         this.config = {
             basePath,

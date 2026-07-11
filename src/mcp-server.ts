@@ -235,16 +235,65 @@ function handleListReports(): string {
     return JSON.stringify({ domains });
 }
 
+function getMarekSystemPrompt(domain?: string): string {
+    const aiPersonaDir = path.join(process.cwd(), 'ai/persona');
+    let system = '';
+    let identity = '';
+    let integrity = '';
+    let personality = '';
+
+    try {
+        system = fs.readFileSync(path.join(aiPersonaDir, 'prompts/system.md'), 'utf8');
+    } catch {}
+    try {
+        identity = fs.readFileSync(path.join(aiPersonaDir, 'identity.md'), 'utf8');
+    } catch {}
+    try {
+        integrity = fs.readFileSync(path.join(aiPersonaDir, 'integrity.md'), 'utf8');
+    } catch {}
+    try {
+        personality = fs.readFileSync(path.join(aiPersonaDir, 'prompts/personality.md'), 'utf8');
+    } catch {}
+
+    let combined = `${system}\n\n${identity}\n\n${integrity}\n\n${personality}`;
+
+    if (domain) {
+        const reportsDir = path.join(STORAGE_DIR, 'reports', domain);
+        if (fs.existsSync(reportsDir)) {
+            const dates = getSortedDateFolders(reportsDir);
+            if (dates.length > 0) {
+                const latest = dates[0];
+                const reportPath = path.join(reportsDir, latest);
+                try {
+                    const files = fs.readdirSync(reportPath);
+                    const reportFile = files.find(f => f.endsWith('.md'));
+                    if (reportFile) {
+                        const mdContent = fs.readFileSync(path.join(reportPath, reportFile), 'utf8');
+                        combined += `\n\n## Context for domain ${domain} (Latest crawl on ${latest}):\n\n${mdContent}`;
+                    }
+                } catch (err) {
+                    console.warn(`Failed to read report for domain ${domain}:`, err);
+                }
+            }
+        }
+    }
+    return combined;
+}
+
 // ── JSON-RPC dispatcher ───────────────────────────────────────────────────────
 
-function dispatch(method: string, params: Record<string, unknown>, id: unknown) {
+export function dispatch(method: string, params: Record<string, unknown>, id: unknown) {
     if (method === 'initialize') {
         return {
             jsonrpc: '2.0',
             id,
             result: {
                 protocolVersion: '2024-11-05',
-                capabilities: { tools: {} },
+                capabilities: {
+                    tools: {},
+                    prompts: {},
+                    resources: {},
+                },
                 serverInfo: { name: 'seo-tools-mcp', version: '1.0.0' },
             },
         };
@@ -275,6 +324,151 @@ function dispatch(method: string, params: Record<string, unknown>, id: unknown) 
             };
 
         return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
+    }
+
+    if (method === 'prompts/list') {
+        return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+                prompts: [
+                    {
+                        name: 'seo-consultant-marek',
+                        description: 'Role seniorního SEO konzultanta Marka pro analýzu technického SEO a GEO.',
+                        arguments: [
+                            {
+                                name: 'domain',
+                                description: 'Volitelná doména pro připojení aktuálních auditních dat (např. ludekkvapil.cz)',
+                                required: false,
+                            },
+                        ],
+                    },
+                ],
+            },
+        };
+    }
+
+    if (method === 'prompts/get') {
+        const name = String(params.name ?? '');
+        if (name !== 'seo-consultant-marek') {
+            return {
+                jsonrpc: '2.0',
+                id,
+                error: { code: -32602, message: `Prompt not found: ${name}` },
+            };
+        }
+        const args = (params.arguments ?? {}) as Record<string, string>;
+        const domain = args.domain ? String(args.domain).trim() : undefined;
+        const promptContent = getMarekSystemPrompt(domain);
+        return {
+            jsonrpc: '2.0',
+            id,
+            result: {
+                description: 'Marek SEO Consultant Prompt',
+                messages: [
+                    {
+                        role: 'user',
+                        content: {
+                            type: 'text',
+                            text: promptContent,
+                        },
+                    },
+                ],
+            },
+        };
+    }
+
+    if (method === 'resources/list') {
+        const reportsDir = path.join(STORAGE_DIR, 'reports');
+        const resources: Array<{ uri: string; name: string; mimeType: string; description: string }> = [];
+        if (fs.existsSync(reportsDir)) {
+            try {
+                const domains = fs.readdirSync(reportsDir);
+                for (const domain of domains) {
+                    const domainPath = path.join(reportsDir, domain);
+                    if (fs.statSync(domainPath).isDirectory()) {
+                        const dates = getSortedDateFolders(domainPath);
+                        if (dates.length > 0) {
+                            resources.push({
+                                uri: `seo://reports/${domain}/latest`,
+                                name: `Latest SEO Audit for ${domain}`,
+                                mimeType: 'text/markdown',
+                                description: `Poslední auditní report pro doménu ${domain} ze dne ${dates[0]}`,
+                            });
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to list resources:', err);
+            }
+        }
+        return {
+            jsonrpc: '2.0',
+            id,
+            result: { resources },
+        };
+    }
+
+    if (method === 'resources/read') {
+        const uri = String(params.uri ?? '');
+        const match = uri.match(/^seo:\/\/reports\/([a-zA-Z0-9.-]+)\/latest$/);
+        if (!match) {
+            return {
+                jsonrpc: '2.0',
+                id,
+                error: { code: -32602, message: `Invalid resource URI: ${uri}` },
+            };
+        }
+        const domain = match[1];
+        const reportsDir = path.join(STORAGE_DIR, 'reports', domain);
+        if (!fs.existsSync(reportsDir)) {
+            return {
+                jsonrpc: '2.0',
+                id,
+                error: { code: -32602, message: `No reports found for domain: ${domain}` },
+            };
+        }
+        const dates = getSortedDateFolders(reportsDir);
+        if (dates.length === 0) {
+            return {
+                jsonrpc: '2.0',
+                id,
+                error: { code: -32602, message: `No reports found for domain: ${domain}` },
+            };
+        }
+        const latest = dates[0];
+        const reportPath = path.join(reportsDir, latest);
+        try {
+            const files = fs.readdirSync(reportPath);
+            const reportFile = files.find(f => f.endsWith('.md'));
+            if (!reportFile) {
+                return {
+                    jsonrpc: '2.0',
+                    id,
+                    error: { code: -32602, message: `Report markdown file not found for domain: ${domain}` },
+                };
+            }
+            const text = fs.readFileSync(path.join(reportPath, reportFile), 'utf8');
+            return {
+                jsonrpc: '2.0',
+                id,
+                result: {
+                    contents: [
+                        {
+                            uri,
+                            mimeType: 'text/markdown',
+                            text,
+                        },
+                    ],
+                },
+            };
+        } catch (err: any) {
+            return {
+                jsonrpc: '2.0',
+                id,
+                error: { code: -32603, message: `Failed to read report: ${err.message}` },
+            };
+        }
     }
 
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
@@ -439,7 +633,7 @@ const server = http.createServer(async (req, res) => {
             }
 
             // Simple loop prevention
-            if (domain === 'localhost' || domain === '127.0.0.1' || domain === 'seo.ludekkvapil.cz' || domain === 'seo.local') {
+            if (domain === 'localhost' || domain === '127.0.0.1' || domain === 'seo.ludekkvapil.cz' || domain === 'seo.mcpserver.cz' || domain === 'seo.local') {
                 return send(400, { error: 'Crawling this domain is not permitted' });
             }
 
