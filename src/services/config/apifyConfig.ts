@@ -16,6 +16,7 @@ export interface IApifyInput {
     requestDelayMin?: number;
     requestDelayMax?: number;
     sitemapDiscovery?: boolean;
+    respectRobotsTxt?: boolean;
     extractionModules?: {
         basicData?: boolean;
         responseData?: boolean;
@@ -73,6 +74,7 @@ export class ApifyConfigService {
                 sitemapDiscovery: envSkipSitemapDiscovery
                     ? false
                     : (input.sitemapDiscovery ?? true),
+                respectRobotsTxt: input.respectRobotsTxt ?? true,
             },
             crawler: {
                 maxRequestsPerCrawl: input.maxRequestsPerCrawl ?? 0,

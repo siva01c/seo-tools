@@ -35,14 +35,18 @@ RUN npm ci --include=dev --audit=false --ignore-scripts
 COPY --chown=seobot src/ ./src/
 COPY --chown=seobot config/ ./config/
 COPY --chown=seobot scripts/ ./scripts/
+COPY --chown=seobot ai/ ./ai/
 COPY --chown=seobot jest.config.js ./
+COPY --chown=seobot eslint.config.js ./
+COPY --chown=seobot .prettierrc.js ./
+COPY --chown=seobot .prettierignore ./
 
 USER seobot
 
 CMD ["npm", "test"]
 
 # ─── production stage ─────────────────────────────────────────────────────────
-FROM apify/actor-node-playwright-chrome:20
+FROM apify/actor-node-playwright-chrome:20 AS production
 
 USER root
 RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
@@ -59,6 +63,7 @@ COPY --from=builder --chown=seobot /home/seobot/dist ./dist
 
 COPY --chown=seobot config/ ./config/
 COPY --chown=seobot .actor/ ./.actor/
+COPY --chown=seobot ai/ ./ai/
 COPY --chown=seobot README.md ./
 
 RUN mkdir -p storage && chown seobot:seobot storage
@@ -74,4 +79,4 @@ RUN echo "Installed NPM packages:" \
 
 USER seobot
 
-CMD ./start_xvfb_and_run_cmd.sh && npm run start:prod --silent
+CMD ./start_xvfb_and_run_cmd.sh && node dist/src/main.js

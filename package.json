@@ -34,7 +34,7 @@
   },
   "scripts": {
     "start": "npm run start:dev",
-    "start:prod": "node dist/main.js",
+    "start:prod": "node dist/src/main.js",
     "start:dev": "tsx src/main.ts",
     "crawl": "tsx src/main.ts",
     "crawl:single": "tsx src/main.ts --single --url",
@@ -46,6 +46,7 @@
     "report:404": "tsx scripts/report-404s.ts",
     "report:seo-issues": "tsx scripts/report-seo-issues.ts",
     "seo-audit": "tsx scripts/seo-audit.ts",
+    "purge-old-data": "tsx scripts/purge-old-data.ts",
     "build": "tsc",
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" jest",
     "test:watch": "NODE_OPTIONS=\"--experimental-vm-modules\" jest --watch",

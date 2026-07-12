@@ -1,5 +1,5 @@
 // For more information, see https://crawlee.dev/
-import { PlaywrightCrawler } from 'crawlee';
+import { PlaywrightCrawler, type RequestOptions } from 'crawlee';
 import { Actor } from 'apify';
 import { ConfigService } from './services/config/configService.js';
 import { ApifyConfigService } from './services/config/apifyConfig.js';
@@ -8,6 +8,7 @@ import {
     generateSitemapXml,
     fetchHtmlSitemapUrls,
 } from './services/sitemapService.js';
+import { fetchRobotsRules, isAllowedByRobots, IRobotsRules } from './services/robotsService.js';
 import { sitemapComparisonService, ISitemapUrl } from './services/sitemapComparison.js';
 import { RateLimitingService, rateLimitPresets } from './services/rateLimitingService.js';
 import { storageService } from './services/storageService.js';
@@ -45,6 +46,10 @@ const seoDataExtracted = {
     totalInternalLinks: 0,
     totalExternalLinks: 0,
 };
+
+// Robots.txt rules for the target domain, fetched once before the crawl starts
+// (see fetchRobotsRules() call below); null when robots.txt enforcement is disabled.
+let activeRobotsRules: IRobotsRules | null = null;
 
 // Crawling map to prevent duplicate URL crawling and track status codes
 const crawlingMap = new Map<
@@ -140,6 +145,20 @@ if (rateLimitArg) {
     commandLineRateLimit = rateLimitArg.split('=')[1];
 }
 
+// Parse max requests per crawl from command line (--max-requests=<N>)
+const maxRequestsArg = args.find(arg => arg.startsWith('--max-requests='));
+let commandLineMaxRequests: number | null = null;
+if (maxRequestsArg) {
+    const parsed = parseInt(maxRequestsArg.split('=')[1], 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+        commandLineMaxRequests = parsed;
+    } else {
+        console.warn(
+            `⚠️ Invalid --max-requests value: ${maxRequestsArg.split('=')[1]}. Must be a positive integer.`
+        );
+    }
+}
+
 // Parse HTML sitemap URL from command line (--html-sitemap-url <URL>)
 const htmlSitemapUrlIndex = args.findIndex(arg => arg === '--html-sitemap-url');
 const commandLineHtmlSitemapUrl =
@@ -150,12 +169,15 @@ const commandLineHtmlSitemapUrl =
 // Parse --html-content flag (enables htmlContent extraction module)
 const commandLineHtmlContent = args.includes('--html-content');
 
+// Parse --ignore-robots flag (disables robots.txt enforcement; respected by default)
+const commandLineIgnoreRobots = args.includes('--ignore-robots');
+
 // Parse date folder from command line (--date-folder DD-MM-YYYY or --date DD-MM-YYYY) or environment variable DATE_FOLDER
 const dateFolderIndex = args.findIndex(arg => arg === '--date-folder' || arg === '--date');
 const commandLineDateFolder =
     dateFolderIndex !== -1 && args[dateFolderIndex + 1]
         ? args[dateFolderIndex + 1]
-        : (process.env.DATE_FOLDER || null);
+        : (process.env.DATE_FOLDER ?? null);
 
 // Check for START_URL environment variable (for Docker)
 const envTargetUrl = process.env.START_URL;
@@ -213,7 +235,11 @@ if (!earlyTargetUrl) {
 }
 
 // Initialize domain-based storage BEFORE Actor.init()
-const storageConfig = storageService.initializeStorage(earlyTargetUrl, './storage', commandLineDateFolder);
+const storageConfig = storageService.initializeStorage(
+    earlyTargetUrl,
+    './storage',
+    commandLineDateFolder
+);
 storageService.configureApifyStorage();
 
 // Initialize URL index service
@@ -226,7 +252,7 @@ const urlIndexService = new UrlIndexService(
 // Populate crawlingMap with existing entries from the index to ensure they are skipped if visited
 try {
     const indexData = urlIndexService.getIndex();
-    if (indexData && indexData.urls) {
+    if (indexData?.urls) {
         Object.entries(indexData.urls).forEach(([url, entry]) => {
             if (entry.status === 'completed' || entry.status === 'failed') {
                 crawlingMap.set(url, {
@@ -237,7 +263,9 @@ try {
                 });
             }
         });
-        console.log(`📋 Loaded ${crawlingMap.size} completed/failed URLs into the crawled page cache.`);
+        console.log(
+            `📋 Loaded ${crawlingMap.size} completed/failed URLs into the crawled page cache.`
+        );
     }
 } catch (error) {
     console.warn('⚠️ Failed to pre-populate crawlingMap from URL index:', error);
@@ -312,7 +340,9 @@ try {
             const hostname = new URL(commandLineTargetUrl).hostname;
             const cleanHost = hostname.replace(/^www\./, '');
             config.targets.allowedDomains = [cleanHost, `www.${cleanHost}`];
-            console.log(`🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`);
+            console.log(
+                `🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`
+            );
         } catch (err: any) {
             console.warn(`⚠️ Failed to parse domain for allowedDomains: ${err.message}`);
         }
@@ -323,7 +353,9 @@ try {
             const hostname = new URL(envTargetUrl).hostname;
             const cleanHost = hostname.replace(/^www\./, '');
             config.targets.allowedDomains = [cleanHost, `www.${cleanHost}`];
-            console.log(`🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`);
+            console.log(
+                `🔄 Overriding allowed domains with: ${config.targets.allowedDomains.join(', ')}`
+            );
         } catch (err: any) {
             console.warn(`⚠️ Failed to parse domain for allowedDomains: ${err.message}`);
         }
@@ -375,6 +407,12 @@ if (commandLineHtmlSitemapUrl) {
 if (commandLineHtmlContent) {
     config.extraction.modules.htmlContent = true;
     console.log(`🧩 HTML content extraction enabled via command line`);
+}
+
+// Disable robots.txt enforcement if --ignore-robots flag is set (respected by default)
+if (commandLineIgnoreRobots) {
+    config.targets.respectRobotsTxt = false;
+    console.log(`🤖 Robots.txt enforcement disabled via command line (--ignore-robots)`);
 }
 
 // Override headless mode with command line if provided
@@ -454,9 +492,28 @@ if (commandLineRateLimit) {
     }
 }
 
+// Override max requests per crawl with command line if provided (caller-enforced hard cap)
+if (commandLineMaxRequests !== null) {
+    config.crawler.maxRequestsPerCrawl = commandLineMaxRequests;
+    console.log(`📊 Max requests per crawl capped via command line: ${commandLineMaxRequests}`);
+}
+
 // Get base domain for rate limiting and link categorization
 let baseDomain = new URL(config.targets.startUrls[0]).hostname;
 console.log(`🌐 Initial base domain for link categorization: ${baseDomain}`);
+
+// Fetch robots.txt rules once for the target domain (respected by default; disable via
+// CRAWLER_RESPECT_ROBOTS_TXT=false or --ignore-robots)
+if (config.targets.respectRobotsTxt) {
+    activeRobotsRules = await fetchRobotsRules(config.targets.startUrls[0]);
+    if (activeRobotsRules.disallow.length > 0) {
+        console.log(
+            `🤖 robots.txt: ${activeRobotsRules.disallow.length} disallow rule(s) will be enforced`
+        );
+    }
+} else {
+    console.log('🤖 robots.txt enforcement disabled — crawling without robots.txt restrictions');
+}
 
 // Initialize rate limiting service
 let rateLimitingService: RateLimitingService | null = null;
@@ -504,8 +561,15 @@ const getRandomDelay = (): number => {
 };
 
 // Use the requestHandler to process each of the crawled pages.
-const requestHandler = async ({ request, page, enqueueLinks, log, pushData, response }: any): Promise<void> => {
-    const currentUrl = request.loadedUrl || request.url;
+const requestHandler = async ({
+    request,
+    page,
+    enqueueLinks,
+    log,
+    pushData,
+    response,
+}: any): Promise<void> => {
+    const currentUrl = request.loadedUrl ?? request.url;
 
     // Check rate limiting before processing
     if (rateLimitingService) {
@@ -586,9 +650,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
 
                     // Wait for smooth scroll to complete
                     setTimeout(() => {
-                        console.log(
-                            `📜 Reached middle of page, staying here for inspection...`
-                        );
+                        console.log(`📜 Reached middle of page, staying here for inspection...`);
                         resolve();
                     }, 2000);
                 });
@@ -689,7 +751,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
     }
 
     // Add this crawled URL to the sitemap collection
-    allCrawledUrls.add(request.loadedUrl || request.url);
+    allCrawledUrls.add(request.loadedUrl ?? request.url);
 
     // Update base domain if this is the first request and we got redirected
     if (pagesProcessed === 1 && request.loadedUrl) {
@@ -776,9 +838,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
             consecutive403Errors = 0;
             console.warn(`❌ Page not found (404) for ${request.loadedUrl}`);
         } else if (statusCode === 302) {
-            console.warn(
-                `🔄 Redirected (302) for ${request.loadedUrl} - possible login required`
-            );
+            console.warn(`🔄 Redirected (302) for ${request.loadedUrl} - possible login required`);
         } else {
             console.warn(`⚠️  HTTP ${statusCode} ${statusText} for ${request.loadedUrl}`);
         }
@@ -813,8 +873,8 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
     if (config.extraction.modules.links) {
         console.log(`🔍 Extracting links from: ${request.loadedUrl}`);
 
-        allLinks = await page.$$eval('a[href]', anchors =>
-            anchors.map(a => {
+        allLinks = await page.$$eval('a[href]', (anchors: Element[]) =>
+            anchors.map((a: Element) => {
                 const anchor = a as HTMLAnchorElement;
                 return {
                     text: anchor.textContent?.trim() ?? '',
@@ -831,9 +891,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
         logger.infoUrl(currentUrl, `Found ${allLinks.length} total links on page`);
 
         // Categorize links if enabled
-        console.log(
-            `🔧 categorizeByDomain setting: ${config.extraction.links.categorizeByDomain}`
-        );
+        console.log(`🔧 categorizeByDomain setting: ${config.extraction.links.categorizeByDomain}`);
         if (config.extraction.links.categorizeByDomain) {
             const categorized = categorizeLinks(
                 allLinks,
@@ -992,10 +1050,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
 
     // Add unique identifier based on plain text content
     if (scrapedData.timestamp && fullTextContent) {
-        scrapedData.content_id = generateContentId(
-            fullTextContent,
-            String(scrapedData.timestamp)
-        );
+        scrapedData.content_id = generateContentId(fullTextContent, String(scrapedData.timestamp));
         console.log(
             `🔑 Generated content ID: ${scrapedData.content_id} for URL: ${request.loadedUrl}`
         );
@@ -1097,7 +1152,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
         await enqueueLinks({
             strategy: 'same-domain',
             // Use transformRequestFunction to filter URLs before they're added to the queue
-            transformRequestFunction: originalRequest => {
+            transformRequestFunction: (originalRequest: RequestOptions) => {
                 try {
                     const parsedUrl = new URL(originalRequest.url);
                     if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
@@ -1109,29 +1164,27 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
                     const hostname = parsedUrl.hostname;
 
                     // Check if domain is excluded
-                    const isDomainExcluded = config.targets.excludedDomains.some(
-                        excludedDomain => {
-                            // Exact hostname match (with and without www)
-                            const normalizeHostname = (hostname: string): string =>
-                                hostname.replace(/^www\./, '');
-                            const normalizedHostname = normalizeHostname(hostname);
-                            const normalizedExcludedDomain = normalizeHostname(excludedDomain);
+                    const isDomainExcluded = config.targets.excludedDomains.some(excludedDomain => {
+                        // Exact hostname match (with and without www)
+                        const normalizeHostname = (hostname: string): string =>
+                            hostname.replace(/^www\./, '');
+                        const normalizedHostname = normalizeHostname(hostname);
+                        const normalizedExcludedDomain = normalizeHostname(excludedDomain);
 
-                            const matches =
-                                hostname === excludedDomain ||
-                                normalizedHostname === normalizedExcludedDomain ||
-                                hostname.endsWith('.' + excludedDomain) ||
-                                excludedDomain.endsWith('.' + hostname);
+                        const matches =
+                            hostname === excludedDomain ||
+                            normalizedHostname === normalizedExcludedDomain ||
+                            hostname.endsWith('.' + excludedDomain) ||
+                            excludedDomain.endsWith('.' + hostname);
 
-                            if (matches) {
-                                console.log(
-                                    `🔍 DEBUG: Domain excluded - hostname: ${hostname}, excludedDomain: ${excludedDomain}`
-                                );
-                            }
-
-                            return matches;
+                        if (matches) {
+                            console.log(
+                                `🔍 DEBUG: Domain excluded - hostname: ${hostname}, excludedDomain: ${excludedDomain}`
+                            );
                         }
-                    );
+
+                        return matches;
+                    });
 
                     // Check if path is excluded
                     const isPathExcluded = config.targets.excludedPaths.some(excludedPath => {
@@ -1194,14 +1247,22 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
                         return false; // Return false to skip this URL
                     }
 
+                    if (
+                        activeRobotsRules &&
+                        !isAllowedByRobots(originalRequest.url, activeRobotsRules)
+                    ) {
+                        console.log(
+                            `🤖 Excluding URL from crawling queue: ${originalRequest.url} - REASON: Disallowed by robots.txt`
+                        );
+                        return false; // Return false to skip this URL
+                    }
+
                     // Add URL to index when it's accepted for crawling
                     urlIndexService.addUrl(originalRequest.url);
 
                     return originalRequest; // Return the original request to include it
                 } catch {
-                    console.log(
-                        `⚠️ Invalid URL in crawling queue filter: ${originalRequest.url}`
-                    );
+                    console.log(`⚠️ Invalid URL in crawling queue filter: ${originalRequest.url}`);
                     return false; // Return false to skip invalid URLs
                 }
             },
@@ -1231,7 +1292,7 @@ const requestHandler = async ({ request, page, enqueueLinks, log, pushData, resp
 
 // Use the failedRequestHandler to handle failed requests.
 const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
-    const currentUrl = request.loadedUrl || request.url;
+    const currentUrl = request.loadedUrl ?? request.url;
     const errorMessage = error instanceof Error ? error.message : String(error);
 
     console.error(`❌ Failed to process URL: ${currentUrl}`, errorMessage);
@@ -1249,9 +1310,7 @@ const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
     // Check if error is 403-related and rotate user-agent
     if (errorMessage.includes('403') || errorMessage.includes('blocked')) {
         consecutive403Errors++;
-        console.warn(
-            `🚫 Request blocked (${consecutive403Errors} consecutive) - ${errorMessage}`
-        );
+        console.warn(`🚫 Request blocked (${consecutive403Errors} consecutive) - ${errorMessage}`);
 
         if (consecutive403Errors >= 3 && Date.now() - lastUserAgentRotation > 60000) {
             globalUserAgentRotator.getNextUserAgent();
@@ -1532,11 +1591,15 @@ urlIndexService.addUrls(urlsToAdd);
 // Load any pending/processing URLs from the existing index to resume/crawl them
 if (!config.crawler.singleUrlMode) {
     const pendingUrlsFromIndex = urlIndexService.getPendingUrls().map(entry => entry.url);
-    const processingUrlsFromIndex = urlIndexService.getUrlsByStatus('processing').map(entry => entry.url);
+    const processingUrlsFromIndex = urlIndexService
+        .getUrlsByStatus('processing')
+        .map(entry => entry.url);
     const resumeUrls = [...pendingUrlsFromIndex, ...processingUrlsFromIndex];
 
     if (resumeUrls.length > 0) {
-        console.log(`📋 Found ${resumeUrls.length} pending/incomplete URLs in the index. Adding them to the crawl queue.`);
+        console.log(
+            `📋 Found ${resumeUrls.length} pending/incomplete URLs in the index. Adding them to the crawl queue.`
+        );
         const existingSet = new Set(urlsToAdd);
         let addedCount = 0;
         for (const url of resumeUrls) {
@@ -1552,9 +1615,23 @@ if (!config.crawler.singleUrlMode) {
 
 // Filter out already completed URLs from the list of URLs to crawl
 const completedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
-const urlsToRun = urlsToAdd.filter(url => !completedUrls.has(url));
+let urlsToRun = urlsToAdd.filter(url => !completedUrls.has(url));
 
-await Actor.setStatusMessage(`Starting crawl of ${urlsToRun.length} URLs (excluding ${completedUrls.size} already completed)...`);
+// Filter out URLs disallowed by robots.txt (applies to sitemap-discovered/seed URLs;
+// links discovered during the crawl are filtered in transformRequestFunction above)
+if (activeRobotsRules) {
+    const rules = activeRobotsRules;
+    const beforeCount = urlsToRun.length;
+    urlsToRun = urlsToRun.filter(url => isAllowedByRobots(url, rules));
+    const skipped = beforeCount - urlsToRun.length;
+    if (skipped > 0) {
+        console.log(`🤖 Excluded ${skipped} seed URL(s) disallowed by robots.txt`);
+    }
+}
+
+await Actor.setStatusMessage(
+    `Starting crawl of ${urlsToRun.length} URLs (excluding ${completedUrls.size} already completed)...`
+);
 
 // Note: Progress tracking is handled within the main request handler
 
@@ -1614,7 +1691,9 @@ try {
         console.log('🔄 Retrying crawl with visible browser (headless=false)...');
         await Actor.setStatusMessage('Retrying with visible browser to bypass bot detection...');
 
-        const retryCompletedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
+        const retryCompletedUrls = new Set(
+            urlIndexService.getProcessedUrls().map(entry => entry.url)
+        );
         const retryUrlsToRun = urlsToAdd.filter(url => !retryCompletedUrls.has(url));
         await retrycrawler.run(retryUrlsToRun);
         console.log('✅ Retry with headless=false completed!');
@@ -1754,7 +1833,9 @@ try {
         await Actor.setStatusMessage('Retrying with visible browser to bypass bot detection...');
 
         try {
-            const retryCompletedUrls = new Set(urlIndexService.getProcessedUrls().map(entry => entry.url));
+            const retryCompletedUrls = new Set(
+                urlIndexService.getProcessedUrls().map(entry => entry.url)
+            );
             const retryUrlsToRun = urlsToRun.filter(url => !retryCompletedUrls.has(url));
             await retrycrawler.run(retryUrlsToRun);
             console.log('✅ Retry with headless=false was successful!');

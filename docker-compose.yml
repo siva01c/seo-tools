@@ -48,12 +48,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: builder
+      target: production
     container_name: seo-tools-mcp
     env_file:
       - ../.env.shared
       - .env
     environment:
+      NODE_ENV: 'production'
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
       MCP_PORT: '3000'
       FRONTEND_DIR: '/home/seobot/frontend/public'
@@ -65,12 +66,11 @@ services:
       HTTPS_METHOD: 'noredirect'
     volumes:
       - ./storage:/home/seobot/storage
-      - ./src:/home/seobot/src
-      - ./scripts:/home/seobot/scripts
       - ../ludekkvapil/public:/home/seobot/frontend/public:ro
     ports:
       - '3001:3000'
-    command: ['npx', 'tsx', 'src/mcp-server.ts']
+    # xvfb provides a display for crawls that retry with a visible browser
+    command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped
     networks:
       - agentic-ops
@@ -78,4 +78,3 @@ services:
 networks:
   agentic-ops:
     external: true
-

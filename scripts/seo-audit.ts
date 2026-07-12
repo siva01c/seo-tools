@@ -270,6 +270,23 @@ function analyzePage(page: IPageRecord): IPageAnalysis {
 
 // ── Markdown rendering ───────────────────────────────────────────────────────
 
+// Crawled URLs are untrusted third-party data (a malicious target page could contain `]`,
+// `)`, `|`, or backtick characters designed to break out of Markdown link/table/code syntax).
+// Escape before embedding in any report output. Does not attempt full XSS sanitization —
+// reports are Markdown-as-text today; revisit before any HTML/dashboard rendering (see
+// docs/todo.md A4).
+function mdEscapeUrl(url: string): string {
+    return url.replace(/[\\`*_[\]()|]/g, '\\$&').replace(/[\r\n]/g, ' ');
+}
+
+// Renders a URL as a Markdown link, refusing to make non-http(s) schemes (e.g. `javascript:`)
+// clickable — crawled internal links are followed via validateCrawlTarget's http(s)-only
+// check, but a page's *displayed* link text/href pairs are raw HTML we don't control.
+function mdLink(url: string): string {
+    const escaped = mdEscapeUrl(url);
+    return /^https?:\/\//i.test(url) ? `[${escaped}](${escaped})` : escaped;
+}
+
 function pct(n: number, total: number): string {
     return total === 0 ? '0%' : `${Math.round((n / total) * 100)}%`;
 }
@@ -357,7 +374,7 @@ function renderMarkdown(
     ): string =>
         `**${m.todoAffectedPages}**\n${analyses
             .filter(filter)
-            .map(a => (label ? label(a) : `- ${a.url}`))
+            .map(a => (label ? label(a) : `- ${mdEscapeUrl(a.url)}`))
             .join('\n')}`;
 
     if (missingSchema > 0) {
@@ -413,7 +430,7 @@ function renderMarkdown(
             m.levHigh,
             `${m.todoEnrichThinBody}\n\n${affected(
                 a => a.wordCount > 0 && a.wordCount < 300,
-                a => `- ${a.url} (${a.wordCount} ${m.todoWordsSuffix})`
+                a => `- ${mdEscapeUrl(a.url)} (${a.wordCount} ${m.todoWordsSuffix})`
             )}`
         );
     }
@@ -432,7 +449,7 @@ function renderMarkdown(
         `${m.todoValidateBody}\n${analyses
             .filter(a => a.jsonLdTypes.length > 0)
             .slice(0, 10)
-            .map(a => `- ${a.url}`)
+            .map(a => `- ${mdEscapeUrl(a.url)}`)
             .join('\n')}`
     );
     task(m.todoVerifyCanonical, m.levHigh, m.levMedium, m.levLow, m.todoVerifyCanonicalBody);
@@ -547,7 +564,7 @@ ${analyses
         const warns = a.issues.filter(i => i.severity === 'warning').length;
         const issueStr =
             crits > 0 ? m.issueCellCritical(crits) : warns > 0 ? m.issueCellWarn(warns) : '✅';
-        const shortUrl = a.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 55) || '/';
+        const shortUrl = mdEscapeUrl(a.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 55) || '/');
         const schemas = a.jsonLdTypes.slice(0, 3).join(', ') || '—';
         return `| \`${shortUrl}\` | ${m.pageType[a.pageType] ?? a.pageType} | ${a.isIndexable ? '✅' : '🔴'} | ${a.hasCanonical ? '✅' : '🟡'} | ${schemas} | ${issueStr} |`;
     })
@@ -711,7 +728,7 @@ ${
         ? m.noThin
         : analyses
               .filter(a => a.wordCount > 0 && a.wordCount < 300)
-              .map(a => m.thinLine(a.url, a.wordCount))
+              .map(a => m.thinLine(mdEscapeUrl(a.url), a.wordCount))
               .join('\n')
 }
 
@@ -741,7 +758,7 @@ ${
         ? m.noOrphanPages
         : analyses
               .filter(a => a.internalLinkCount === 0)
-              .map(a => `- ${a.url}`)
+              .map(a => `- ${mdEscapeUrl(a.url)}`)
               .join('\n')
 }
 
@@ -776,7 +793,7 @@ ${
 ${analyses
     .filter(a => a.jsonLdTypes.length > 0)
     .slice(0, 10)
-    .map(a => `- [${a.url}](${a.url}) — ${a.jsonLdTypes.join(', ')}`)
+    .map(a => `- ${mdLink(a.url)} — ${a.jsonLdTypes.join(', ')}`)
     .join('\n')}
 
 ### ${m.hTechChecklist}
@@ -807,7 +824,7 @@ ${todos.join('\n\n---\n\n')}
 ${
     pdfPages.length === 0
         ? m.noPdf
-        : `${m.pdfFound(pdfPages.length)}\n\n| ${m.thPdf[0]} | ${m.thPdf[1]} |\n|-----|--------|\n${pdfPages.map(p => `| [${p.url}](${p.url}) | ${p.response?.status ?? '—'} |`).join('\n')}`
+        : `${m.pdfFound(pdfPages.length)}\n\n| ${m.thPdf[0]} | ${m.thPdf[1]} |\n|-----|--------|\n${pdfPages.map(p => `| ${mdLink(p.url)} | ${p.response?.status ?? '—'} |`).join('\n')}`
 }
 
 ---
@@ -817,7 +834,7 @@ ${
 ${analyses
     .filter(a => a.issues.length > 0)
     .map(a => {
-        const path = a.url.replace(/^https?:\/\/[^/]+/, '') || '/';
+        const path = mdEscapeUrl(a.url.replace(/^https?:\/\/[^/]+/, '') || '/');
         return `### \`${path}\`\n${a.issues.map(i => `- ${severityIcon(i.severity)} ${i.message}`).join('\n')}`;
     })
     .join('\n\n')}

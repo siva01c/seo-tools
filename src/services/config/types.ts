@@ -15,6 +15,7 @@ export interface ITargetConfig {
     excludedPaths: string[];
     sitemapDiscovery: boolean;
     htmlSitemapUrl?: string;
+    respectRobotsTxt: boolean;
 }
 
 export interface ICrawlerSettings {

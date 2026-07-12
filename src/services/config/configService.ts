@@ -66,6 +66,7 @@ export class ConfigService {
                 excludedDomains: [],
                 excludedPaths: [],
                 sitemapDiscovery: true,
+                respectRobotsTxt: true,
             },
             crawler: {
                 maxRequestsPerCrawl: 0,
@@ -194,6 +195,7 @@ export class ConfigService {
         const excludedDomains = process.env['CRAWLER_EXCLUDED_DOMAINS'];
         const excludedPaths = process.env['CRAWLER_EXCLUDED_PATHS'];
         const sitemapDiscovery = process.env['CRAWLER_SITEMAP_DISCOVERY'];
+        const respectRobotsTxt = process.env['CRAWLER_RESPECT_ROBOTS_TXT'];
 
         const splitTrim = (s: string) =>
             s
@@ -219,6 +221,8 @@ export class ConfigService {
         }
         if (sitemapDiscovery !== undefined)
             config.targets.sitemapDiscovery = sitemapDiscovery === 'true';
+        if (respectRobotsTxt !== undefined)
+            config.targets.respectRobotsTxt = respectRobotsTxt === 'true';
 
         return config;
     }

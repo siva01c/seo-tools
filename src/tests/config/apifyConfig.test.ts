@@ -1,17 +1,20 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { ApifyConfigService, ApifyInput } from '../../services/config/apifyConfig.js';
-import { Actor } from 'apify';
+import type { IApifyInput } from '../../services/config/apifyConfig.js';
 
-// Mock Apify Actor
+// jest.mock('apify', ...) does not intercept ESM imports under the ts-jest ESM preset
+// used by this project, so the module under test must be dynamically imported after
+// registering the mock via jest.unstable_mockModule.
 const mockGetInput = jest.fn();
 const mockGetEnv = jest.fn();
 
-jest.mock('apify', () => ({
+jest.unstable_mockModule('apify', () => ({
     Actor: {
         getInput: mockGetInput,
         getEnv: mockGetEnv,
     },
 }));
+
+const { ApifyConfigService } = await import('../../services/config/apifyConfig.js');
 
 describe('ApifyConfigService', () => {
     beforeEach(() => {
@@ -24,7 +27,7 @@ describe('ApifyConfigService', () => {
 
     describe('getConfigFromInput', () => {
         it('should convert Apify input to internal configuration format', async () => {
-            const mockInput: ApifyInput = {
+            const mockInput: IApifyInput = {
                 startUrls: [{ url: 'https://example.com' }],
                 maxRequestsPerCrawl: 10,
                 maxConcurrency: 2,
@@ -51,7 +54,7 @@ describe('ApifyConfigService', () => {
         });
 
         it('should apply environment variable overrides', async () => {
-            const mockInput: ApifyInput = {
+            const mockInput: IApifyInput = {
                 startUrls: [{ url: 'https://example.com' }],
                 maxConcurrency: 1,
             };
@@ -83,11 +86,12 @@ describe('ApifyConfigService', () => {
         });
 
         it('should throw error when startUrls is empty', async () => {
-            const mockInput: ApifyInput = {
+            const mockInput: IApifyInput = {
                 startUrls: [],
             };
 
             mockGetInput.mockResolvedValue(mockInput);
+            mockGetEnv.mockReturnValue({});
 
             await expect(ApifyConfigService.getConfigFromInput()).rejects.toThrow(
                 'startUrls is required and must contain at least one URL'
@@ -95,7 +99,7 @@ describe('ApifyConfigService', () => {
         });
 
         it('should use default values for optional fields', async () => {
-            const mockInput: ApifyInput = {
+            const mockInput: IApifyInput = {
                 startUrls: [{ url: 'https://example.com' }],
             };
 

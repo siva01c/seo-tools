@@ -9,6 +9,7 @@ targets:
   # CRAWLER_EXCLUDED_DOMAINS=api.example.com
   # CRAWLER_EXCLUDED_PATHS=/wp-admin,/user/login
   # CRAWLER_SITEMAP_DISCOVERY=true
+  # CRAWLER_RESPECT_ROBOTS_TXT=true
   startUrls: []
   allowedDomains: []
   excludedDomains:
@@ -18,6 +19,9 @@ targets:
   # HTML sitemap URL (e.g. /sitemap.html) - leave empty to disable
   # Use this when the site has an HTML sitemap instead of (or in addition to) an XML sitemap
   htmlSitemapUrl: ''
+  # Respect robots.txt Disallow rules (true/false). Enabled by default; disable only for
+  # authorized/internal crawls. Can also be disabled per-run via the --ignore-robots CLI flag.
+  respectRobotsTxt: true
 
 # Crawler behavior settings
 crawler:
