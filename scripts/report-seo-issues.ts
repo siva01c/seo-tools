@@ -4,6 +4,11 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
 import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
+import {
+    findIncompleteOpenGraph,
+    findMissingTwitterCard,
+    classifyRedirects,
+} from '../src/services/issueChecksService.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +19,7 @@ type Page = {
     url: string;
     title?: string;
     timestamp?: string;
-    response?: { status?: number };
+    response?: { status?: number; url?: string };
     seo?: {
         metaTags?: Record<string, string>;
     };
@@ -491,6 +496,60 @@ if (csvFlag) {
     writeCsv(`jsonld-issues-${dateStamp}.csv`, rows);
 }
 
+// ── Report 6: Open Graph completeness ────────────────────────────────────────
+
+console.log('📝 Report 6: Open Graph completeness');
+
+const ogIssues = findIncompleteOpenGraph(allPages);
+
+writeJson(`og-completeness-${dateStamp}.json`, { total: ogIssues.length, issues: ogIssues });
+
+if (csvFlag) {
+    const rows: string[][] = [mi.csvOgComplete];
+    for (const e of ogIssues) {
+        rows.push([e.url, e.title ?? '', e.present.join(' | '), e.missing.join(' | ')]);
+    }
+    writeCsv(`og-completeness-${dateStamp}.csv`, rows);
+}
+
+// ── Report 7: Twitter Card missing ───────────────────────────────────────────
+
+console.log('📝 Report 7: Twitter Card missing');
+
+const twitterCardIssues = findMissingTwitterCard(allPages);
+
+writeJson(`twitter-card-missing-${dateStamp}.json`, {
+    total: twitterCardIssues.length,
+    issues: twitterCardIssues,
+});
+
+if (csvFlag) {
+    const rows: string[][] = [mi.csvTwitterCard];
+    for (const e of twitterCardIssues) {
+        rows.push([e.url, e.title ?? '']);
+    }
+    writeCsv(`twitter-card-missing-${dateStamp}.csv`, rows);
+}
+
+// ── Report 8: Redirect classification ────────────────────────────────────────
+
+console.log('📝 Report 8: Redirect classification');
+
+const redirectClassIssues = classifyRedirects(allPages);
+
+writeJson(`redirect-classification-${dateStamp}.json`, {
+    total: redirectClassIssues.length,
+    issues: redirectClassIssues,
+});
+
+if (csvFlag) {
+    const rows: string[][] = [mi.csvRedirectClass];
+    for (const e of redirectClassIssues) {
+        rows.push([e.url, e.redirectsTo ?? '', e.category]);
+    }
+    writeCsv(`redirect-classification-${dateStamp}.csv`, rows);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${mi.sumHeader}`);
@@ -499,4 +558,7 @@ console.log(`  ${mi.sumTitle}: ${titleIssues.length}`);
 console.log(`  ${mi.sumH1}: ${h1Issues.length}`);
 console.log(`  ${mi.sumOrphan}: ${orphanedPages.length}`);
 console.log(`  ${mi.sumJsonLd}: ${jsonLdIssues.length}`);
+console.log(`  ${mi.sumOgComplete}: ${ogIssues.length}`);
+console.log(`  ${mi.sumTwitterCard}: ${twitterCardIssues.length}`);
+console.log(`  ${mi.sumRedirectClass}: ${redirectClassIssues.length}`);
 console.log(`\n  ${mi.sumWritten}: ${reportsRoot}`);

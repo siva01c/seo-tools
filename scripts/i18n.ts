@@ -9,7 +9,7 @@
  * Only human-facing prose and CSV column headers are translated. JSON object keys and enum
  * values (e.g. `issue: "missing"`) stay in English so the data stays a stable machine format.
  *
- * `messages` is typed `Record<Lang, Messages>`, so `tsc` fails the build if the Czech map is
+ * `messages` is typed `Record<Lang, IMessages>`, so `tsc` fails the build if the Czech map is
  * missing any key — a compile-time completeness guarantee.
  */
 
@@ -37,7 +37,7 @@ export const withSuffix = (filename: string, lang: Lang): string => {
 
 // ── Message shapes ─────────────────────────────────────────────────────────────
 
-export interface SeoAuditMessages {
+export interface ISeoAuditMessages {
     reportTitle: string;
     metaCrawlDates: string;
     metaGenerated: string;
@@ -57,6 +57,7 @@ export interface SeoAuditMessages {
     sValidationPlan: string;
     sRoadmap: string;
     sTodoBacklog: string;
+    sSitemapRobots: string;
     sPdfFiles: string;
     sFullIssueList: string;
 
@@ -84,6 +85,7 @@ export interface SeoAuditMessages {
     thLinking: [string, string];
     thRoadmap: [string, string, string, string];
     thPdf: [string, string];
+    thSitemap: [string, string, string, string, string];
 
     // Executive-summary row labels
     rowUniquePages: string;
@@ -188,6 +190,12 @@ export interface SeoAuditMessages {
     chkRobots: string;
     chkJsonLdRenders: string;
 
+    // Sitemap & robots.txt validation (B5)
+    robotsNotFound: string;
+    robotsSitemapsFound: (n: number) => string;
+    robotsNoSitemapDirective: string;
+    noSitemapIssues: string;
+
     // PDF + footer
     noPdf: string;
     pdfFound: (n: number) => string;
@@ -218,6 +226,20 @@ export interface SeoAuditMessages {
     issNoJsonLd: string;
     issThin: (words: number) => string;
     issNoInternal: string;
+    issNoViewport: string;
+    issInvalidViewport: string;
+    issNotHttps: string;
+    issNoHsts: string;
+    issNoXContentTypeOptions: string;
+    issNoCsp: string;
+    issMixedContent: string;
+    issMultipleH1: (count: number) => string;
+    issNoH1: string;
+    issSkippedHeadingLevel: (from: number, to: number) => string;
+    issImageMissingAlt: (count: number, total: number) => string;
+    issDuplicateTitle: string;
+    issDuplicateDescription: string;
+    issRedirectChain: (hops: number) => string;
 
     // TODO backlog tasks (title + body); priority/impact/effort use levHigh/… above
     todoAffectedPages: string; // "Affected pages:"
@@ -245,36 +267,62 @@ export interface SeoAuditMessages {
     roadmapFixBroken: (n: number) => string;
 }
 
-export interface SeoIssuesMessages {
+export interface ISeoIssuesMessages {
     csvMetaDesc: string[];
     csvTitle: string[];
     csvH1: string[];
     csvOrphan: string[];
     csvJsonLd: string[];
+    csvOgComplete: string[];
+    csvTwitterCard: string[];
+    csvRedirectClass: string[];
     sumHeader: string;
     sumMetaDesc: string;
     sumTitle: string;
     sumH1: string;
     sumOrphan: string;
     sumJsonLd: string;
+    sumOgComplete: string;
+    sumTwitterCard: string;
+    sumRedirectClass: string;
     sumWritten: string;
 }
 
-export interface Report404Messages {
+export interface IReport404Messages {
     csvHeader: string[];
     discLinkedFrom: string;
     discSeeded: string;
 }
 
-export interface Messages {
-    seoAudit: SeoAuditMessages;
-    seoIssues: SeoIssuesMessages;
-    report404: Report404Messages;
+export interface ILinkGraphIssuesMessages {
+    csvBrokenLink: string[];
+    csvOrphanRedirect: string[];
+    csvSingleDofollow: string[];
+    sumHeader: string;
+    sumBrokenLink: string;
+    sumOrphanRedirect: string;
+    sumSingleDofollow: string;
+    sumWritten: string;
+}
+
+export interface ISitemapIssuesMessages {
+    csvMultiSitemap: string[];
+    sumHeader: string;
+    sumMultiSitemap: string;
+    sumWritten: string;
+}
+
+export interface IMessages {
+    seoAudit: ISeoAuditMessages;
+    seoIssues: ISeoIssuesMessages;
+    report404: IReport404Messages;
+    linkGraphIssues: ILinkGraphIssuesMessages;
+    sitemapIssues: ISitemapIssuesMessages;
 }
 
 // ── English ────────────────────────────────────────────────────────────────────
 
-const en: Messages = {
+const en: IMessages = {
     seoAudit: {
         reportTitle: 'SEO Audit Report',
         metaCrawlDates: 'Crawl dates analyzed',
@@ -293,6 +341,7 @@ const en: Messages = {
         sValidationPlan: 'Validation Plan',
         sRoadmap: 'Prioritized Implementation Roadmap',
         sTodoBacklog: 'Developer TODO Backlog',
+        sSitemapRobots: 'Sitemap & Robots.txt Validation',
         sPdfFiles: 'PDF Files',
         sFullIssueList: 'Full Issue List Per Page',
         hKeyFindings: 'Key findings',
@@ -316,6 +365,7 @@ const en: Messages = {
         thLinking: ['Metric', 'Value'],
         thRoadmap: ['Task', 'Priority', 'Impact', 'Effort'],
         thPdf: ['URL', 'Status'],
+        thSitemap: ['Sitemap', 'Reachable', 'Well-formed', 'URLs', 'Lastmod issues'],
         rowUniquePages: 'Unique pages analyzed',
         rowCritical: '🔴 Pages with critical issues',
         rowMissingDesc: 'Missing meta description',
@@ -402,6 +452,11 @@ const en: Messages = {
         chkNoDupSchema: 'No duplicate schema blocks (e.g., multiple Organization definitions)',
         chkRobots: 'robots.txt does not block key page templates',
         chkJsonLdRenders: 'JSON-LD renders correctly in page source (not JS-only)',
+        robotsNotFound: '_robots.txt could not be fetched or is empty — treating as unrestricted._',
+        robotsSitemapsFound: n => `robots.txt lists ${n} sitemap directive(s).`,
+        robotsNoSitemapDirective:
+            '_robots.txt has no Sitemap: directive — falling back to /sitemap.xml._',
+        noSitemapIssues: '_No sitemap validation issues found._',
         noPdf: '_No PDF files detected._',
         pdfFound: n => `Found **${n} PDF file(s)**:`,
         footer: '*Generated by metadata-crawler SEO audit script — https://github.com/siva01c/seo-tools*',
@@ -432,6 +487,21 @@ const en: Messages = {
         issNoJsonLd: 'No JSON-LD structured data',
         issThin: words => `Thin content (${words} words, min 300)`,
         issNoInternal: 'No internal links (orphan page risk)',
+        issNoViewport: 'Missing viewport meta tag (not mobile-friendly)',
+        issInvalidViewport:
+            'Viewport meta tag present but not responsive (missing width=device-width)',
+        issNotHttps: 'Page served over plain HTTP, not HTTPS',
+        issNoHsts: 'Missing Strict-Transport-Security header',
+        issNoXContentTypeOptions: 'Missing X-Content-Type-Options header',
+        issNoCsp: 'Missing Content-Security-Policy header',
+        issMixedContent: 'Mixed content: HTTP resources loaded on an HTTPS page',
+        issMultipleH1: count => `Multiple H1 tags found (${count})`,
+        issNoH1: 'Missing H1 tag',
+        issSkippedHeadingLevel: (from, to) => `Skipped heading level: H${from} followed by H${to}`,
+        issImageMissingAlt: (count, total) => `${count} of ${total} images missing alt text`,
+        issDuplicateTitle: 'Title duplicated on another page',
+        issDuplicateDescription: 'Meta description duplicated on another page',
+        issRedirectChain: hops => `Redirect chain of ${hops} hops before reaching this page`,
         todoAffectedPages: 'Affected pages:',
         todoAddSchema: n => `Add JSON-LD structured data to ${n} pages without schema`,
         todoAddOrg: 'Add global Organization schema to all pages',
@@ -468,12 +538,18 @@ const en: Messages = {
         csvH1: ['url', 'title', 'issue', 'h1_values', 'duplicate_urls'],
         csvOrphan: ['url', 'title', 'timestamp'],
         csvJsonLd: ['url', 'title', 'issue', 'types_found'],
+        csvOgComplete: ['url', 'title', 'present', 'missing'],
+        csvTwitterCard: ['url', 'title'],
+        csvRedirectClass: ['url', 'redirects_to', 'category'],
         sumHeader: '📊 Summary',
         sumMetaDesc: 'Meta description issues',
         sumTitle: 'Title issues',
         sumH1: 'H1 issues',
         sumOrphan: 'Orphaned pages',
         sumJsonLd: 'JSON-LD issues',
+        sumOgComplete: 'Open Graph incomplete',
+        sumTwitterCard: 'Twitter Card missing',
+        sumRedirectClass: 'Redirect classification',
         sumWritten: 'Reports written to',
     },
     report404: {
@@ -490,11 +566,33 @@ const en: Messages = {
         discLinkedFrom: 'linked_from_page',
         discSeeded: 'seeded_or_sitemap',
     },
+    linkGraphIssues: {
+        csvBrokenLink: ['source_url', 'source_title', 'target_url', 'target_status', 'link_text'],
+        csvOrphanRedirect: ['url', 'status'],
+        csvSingleDofollow: [
+            'url',
+            'dofollow_referrer_url',
+            'dofollow_referrer_title',
+            'link_text',
+            'total_incoming_links',
+        ],
+        sumHeader: '📊 Summary',
+        sumBrokenLink: 'Pages linking to broken pages',
+        sumOrphanRedirect: 'Redirected pages with no incoming internal links',
+        sumSingleDofollow: 'Pages with only one dofollow incoming internal link',
+        sumWritten: 'Reports written to',
+    },
+    sitemapIssues: {
+        csvMultiSitemap: ['url', 'sitemaps'],
+        sumHeader: '📊 Summary',
+        sumMultiSitemap: 'Pages in multiple sitemaps',
+        sumWritten: 'Reports written to',
+    },
 };
 
 // ── Czech ────────────────────────────────────────────────────────────────────
 
-const cs: Messages = {
+const cs: IMessages = {
     seoAudit: {
         reportTitle: 'SEO audit',
         metaCrawlDates: 'Analyzované dny crawlu',
@@ -513,6 +611,7 @@ const cs: Messages = {
         sValidationPlan: 'Plán validace',
         sRoadmap: 'Prioritizovaný plán implementace',
         sTodoBacklog: 'Backlog úkolů pro vývojáře',
+        sSitemapRobots: 'Validace sitemap a robots.txt',
         sPdfFiles: 'PDF soubory',
         sFullIssueList: 'Úplný seznam problémů po stránkách',
         hKeyFindings: 'Klíčová zjištění',
@@ -536,6 +635,7 @@ const cs: Messages = {
         thLinking: ['Metrika', 'Hodnota'],
         thRoadmap: ['Úkol', 'Priorita', 'Dopad', 'Náročnost'],
         thPdf: ['URL', 'Stav'],
+        thSitemap: ['Sitemap', 'Dostupná', 'Validní XML', 'URL', 'Problémy s lastmod'],
         rowUniquePages: 'Počet unikátních stránek',
         rowCritical: '🔴 Stránky s kritickými problémy',
         rowMissingDesc: 'Chybí meta popis',
@@ -623,6 +723,12 @@ const cs: Messages = {
         chkNoDupSchema: 'Žádné duplicitní bloky schémat (např. více definic Organization)',
         chkRobots: 'robots.txt neblokuje klíčové šablony stránek',
         chkJsonLdRenders: 'JSON-LD se správně vykresluje ve zdroji stránky (ne jen přes JS)',
+        robotsNotFound:
+            '_robots.txt se nepodařilo načíst nebo je prázdný — považováno za neomezené._',
+        robotsSitemapsFound: n => `robots.txt uvádí ${n} direktiv(u) Sitemap.`,
+        robotsNoSitemapDirective:
+            '_robots.txt neobsahuje direktivu Sitemap: — použije se výchozí /sitemap.xml._',
+        noSitemapIssues: '_Nebyly nalezeny žádné problémy s validací sitemap._',
         noPdf: '_Žádné PDF soubory nebyly nalezeny._',
         pdfFound: n => `Nalezeno **${n} PDF souborů**:`,
         footer: '*Vygenerováno skriptem SEO auditu metadata-crawler — https://github.com/siva01c/seo-tools*',
@@ -653,6 +759,22 @@ const cs: Messages = {
         issNoJsonLd: 'Žádná strukturovaná data JSON-LD',
         issThin: words => `Tenký obsah (${words} slov, min 300)`,
         issNoInternal: 'Žádné interní odkazy (riziko osamocené stránky)',
+        issNoViewport: 'Chybí meta tag viewport (stránka není optimalizovaná pro mobily)',
+        issInvalidViewport:
+            'Meta tag viewport je přítomen, ale není responzivní (chybí width=device-width)',
+        issNotHttps: 'Stránka je servírována přes obyčejné HTTP, ne HTTPS',
+        issNoHsts: 'Chybí hlavička Strict-Transport-Security',
+        issNoXContentTypeOptions: 'Chybí hlavička X-Content-Type-Options',
+        issNoCsp: 'Chybí hlavička Content-Security-Policy',
+        issMixedContent: 'Smíšený obsah: HTTP zdroje načítané na HTTPS stránce',
+        issMultipleH1: count => `Nalezeno více tagů H1 (${count})`,
+        issNoH1: 'Chybí tag H1',
+        issSkippedHeadingLevel: (from, to) =>
+            `Přeskočená úroveň nadpisu: H${from} následuje H${to}`,
+        issImageMissingAlt: (count, total) => `${count} z ${total} obrázků bez alt textu`,
+        issDuplicateTitle: 'Title je duplicitní s jinou stránkou',
+        issDuplicateDescription: 'Meta popis je duplicitní s jinou stránkou',
+        issRedirectChain: hops => `Řetězec ${hops} přesměrování před dosažením této stránky`,
         todoAffectedPages: 'Dotčené stránky:',
         todoAddSchema: n => `Přidat strukturovaná data JSON-LD na ${n} stránek bez schématu`,
         todoAddOrg: 'Přidat globální schéma Organization na všechny stránky',
@@ -691,12 +813,18 @@ const cs: Messages = {
         csvH1: ['url', 'titulek', 'problem', 'h1_hodnoty', 'duplicitni_url'],
         csvOrphan: ['url', 'titulek', 'casova_znacka'],
         csvJsonLd: ['url', 'titulek', 'problem', 'nalezene_typy'],
+        csvOgComplete: ['url', 'titulek', 'pritomne', 'chybejici'],
+        csvTwitterCard: ['url', 'titulek'],
+        csvRedirectClass: ['url', 'presmerovano_na', 'kategorie'],
         sumHeader: '📊 Souhrn',
         sumMetaDesc: 'Problémy s meta popisem',
         sumTitle: 'Problémy s titulkem',
         sumH1: 'Problémy s H1',
         sumOrphan: 'Osamocené stránky',
         sumJsonLd: 'Problémy s JSON-LD',
+        sumOgComplete: 'Neúplné Open Graph značky',
+        sumTwitterCard: 'Chybějící Twitter Card',
+        sumRedirectClass: 'Klasifikace přesměrování',
         sumWritten: 'Reporty zapsány do',
     },
     report404: {
@@ -713,6 +841,34 @@ const cs: Messages = {
         discLinkedFrom: 'linked_from_page',
         discSeeded: 'seeded_or_sitemap',
     },
+    linkGraphIssues: {
+        csvBrokenLink: [
+            'zdrojova_url',
+            'zdrojovy_titulek',
+            'cilova_url',
+            'cilovy_stav',
+            'text_odkazu',
+        ],
+        csvOrphanRedirect: ['url', 'stav'],
+        csvSingleDofollow: [
+            'url',
+            'dofollow_odkazujici_url',
+            'dofollow_odkazujici_titulek',
+            'text_odkazu',
+            'celkem_prichozich_odkazu',
+        ],
+        sumHeader: '📊 Souhrn',
+        sumBrokenLink: 'Stránky odkazující na nefunkční stránky',
+        sumOrphanRedirect: 'Přesměrované stránky bez příchozích interních odkazů',
+        sumSingleDofollow: 'Stránky s pouze jedním dofollow příchozím interním odkazem',
+        sumWritten: 'Reporty zapsány do',
+    },
+    sitemapIssues: {
+        csvMultiSitemap: ['url', 'sitemapy'],
+        sumHeader: '📊 Souhrn',
+        sumMultiSitemap: 'Stránky ve více sitemapách',
+        sumWritten: 'Reporty zapsány do',
+    },
 };
 
-export const messages: Record<Lang, Messages> = { en, cs };
+export const messages: Record<Lang, IMessages> = { en, cs };

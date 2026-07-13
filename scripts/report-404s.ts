@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'path';
 import { messages, resolveLang, langSuffix } from './i18n.js';
 import { dedupePagesByUrl } from './page-records.js';
+import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
 
 type Link = { href?: string; text?: string };
 type Page = {
@@ -148,22 +149,20 @@ for (const domain of domainsToProcess) {
         ensureDir(reportDir);
     }
 
-    // Build reverse index: target URL -> referrers
-    const refMap = new Map<string, Referrer[]>();
-    for (const page of pages) {
-        const links = [...(page.links?.internal ?? []), ...(page.links?.external ?? [])];
-        for (const link of links) {
-            if (!link?.href) continue;
-            const list = refMap.get(link.href) ?? [];
-            list.push({
-                pageUrl: page.url,
-                pageTitle: page.title,
-                linkText: link.text,
-                crawlDate: page._metadata?.crawlDate,
-            });
-            refMap.set(link.href, list);
-        }
-    }
+    // Build reverse index: target URL -> referrers (internal + external links, matching the
+    // original inline behavior here — unlike the internal-only default used elsewhere).
+    const linkGraph = buildReverseLinkGraph(pages, { internalOnly: false });
+    const refMap = new Map<string, Referrer[]>(
+        [...linkGraph.entries()].map(([url, refs]) => [
+            url,
+            refs.map(r => ({
+                pageUrl: r.pageUrl,
+                pageTitle: r.pageTitle,
+                linkText: r.linkText,
+                crawlDate: r.crawlDate,
+            })),
+        ])
+    );
 
     // Collect 404 pages
     const notFoundPages = pages.filter(p => p.response?.status === 404);
