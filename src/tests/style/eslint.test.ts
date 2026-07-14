@@ -30,7 +30,9 @@ describe('ESLint Code Style Tests', () => {
         'should have no TypeScript-specific linting errors',
         async () => {
             try {
-                const { stdout } = await execAsync('npm run lint -- --format json');
+                const { stdout } = await execAsync(
+                    'npx eslint src/ scripts/ --ext .ts,.js --format json'
+                );
 
                 if (stdout.trim()) {
                     const results = JSON.parse(stdout);
@@ -68,7 +70,9 @@ describe('ESLint Code Style Tests', () => {
         'should enforce naming conventions',
         async () => {
             try {
-                const { stdout } = await execAsync('npm run lint -- --format json');
+                const { stdout } = await execAsync(
+                    'npx eslint src/ scripts/ --ext .ts,.js --format json'
+                );
 
                 if (stdout.trim()) {
                     const results = JSON.parse(stdout);
@@ -94,7 +98,9 @@ describe('ESLint Code Style Tests', () => {
         'should enforce no unused variables',
         async () => {
             try {
-                const { stdout } = await execAsync('npm run lint -- --format json');
+                const { stdout } = await execAsync(
+                    'npx eslint src/ scripts/ --ext .ts,.js --format json'
+                );
 
                 if (stdout.trim()) {
                     const results = JSON.parse(stdout);
@@ -120,7 +126,9 @@ describe('ESLint Code Style Tests', () => {
         'should enforce explicit return types on functions',
         async () => {
             try {
-                const { stdout } = await execAsync('npm run lint -- --format json');
+                const { stdout } = await execAsync(
+                    'npx eslint src/ scripts/ --ext .ts,.js --format json'
+                );
 
                 if (stdout.trim()) {
                     const results = JSON.parse(stdout);

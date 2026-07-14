@@ -2,6 +2,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as ts from 'typescript';
 
 const execAsync = promisify(exec);
 
@@ -31,25 +32,29 @@ describe('TypeScript Code Quality Tests', () => {
         timeout
     );
 
-    test('should have proper TypeScript configuration', async () => {
-        const tsconfigPath = './tsconfig.json';
+    test('should have proper TypeScript configuration', () => {
+        // tsconfig.json uses `extends: "@apify/tsconfig"`, so most compiler options are inherited
+        // rather than inlined — reading the file as raw JSON would miss all of them. Resolve the
+        // extends chain via the TypeScript compiler API to check the *effective* configuration,
+        // and use getStrictOptionValue() for the strict-mode sub-flags (noImplicitAny,
+        // strictNullChecks), which TypeScript resolves implicitly from `strict: true` rather than
+        // storing as literal booleans on the parsed options object.
+        const configPath = ts.findConfigFile('./', ts.sys.fileExists, 'tsconfig.json');
+        expect(configPath).toBeDefined();
 
-        try {
-            const tsconfigContent = await fs.promises.readFile(tsconfigPath, 'utf-8');
-            const tsconfig = JSON.parse(tsconfigContent);
+        const { config, error: readError } = ts.readConfigFile(configPath!, ts.sys.readFile);
+        expect(readError).toBeUndefined();
 
-            // Check for strict mode
-            expect(tsconfig.compilerOptions.strict).toBe(true);
+        const parsed = ts.parseJsonConfigFileContent(config, ts.sys, './');
+        const options = parsed.options;
 
-            // Check for important compiler options
-            expect(tsconfig.compilerOptions.noImplicitAny).toBe(true);
-            expect(tsconfig.compilerOptions.strictNullChecks).toBe(true);
-            expect(tsconfig.compilerOptions.noImplicitReturns).toBe(true);
-            expect(tsconfig.compilerOptions.noUnusedLocals).toBe(true);
-            expect(tsconfig.compilerOptions.noUnusedParameters).toBe(true);
-        } catch (error: any) {
-            throw new Error(`Failed to read or parse tsconfig.json: ${error.message}`);
-        }
+        expect(options.strict).toBe(true);
+        expect(ts.getStrictOptionValue(options, 'noImplicitAny')).toBe(true);
+        expect(ts.getStrictOptionValue(options, 'strictNullChecks')).toBe(true);
+        expect(options.noImplicitReturns).toBe(true);
+        expect(options.noUnusedParameters).toBe(true);
+        // This project intentionally overrides the base config's noUnusedLocals: true to false.
+        expect(options.noUnusedLocals).toBe(false);
     });
 
     test('should have proper import statements', async () => {

@@ -1,13 +1,16 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { Actor } from 'apify';
 
 /**
  * Automated tests for Apify Actor functionality
  * Based on Apify's recommended testing patterns:
  * - https://docs.apify.com/platform/actors/development/automated-tests
+ *
+ * jest.mock('apify', ...) does not intercept ESM imports under the ts-jest ESM preset used by
+ * this project, so the module under test must be dynamically imported after registering the
+ * mock via jest.unstable_mockModule (see src/tests/config/apifyConfig.test.ts for the same
+ * pattern).
  */
 
-// Mock the Actor for testing
 const mockInit = jest.fn();
 const mockExit = jest.fn();
 const mockGetInput = jest.fn();
@@ -16,7 +19,7 @@ const mockSetValue = jest.fn();
 const mockFail = jest.fn();
 const mockSetStatusMessage = jest.fn();
 
-jest.mock('apify', () => ({
+jest.unstable_mockModule('apify', () => ({
     Actor: {
         init: mockInit,
         exit: mockExit,
@@ -27,6 +30,8 @@ jest.mock('apify', () => ({
         setStatusMessage: mockSetStatusMessage,
     },
 }));
+
+const { Actor } = await import('apify');
 
 describe('Apify Actor Automated Tests', () => {
     beforeEach(() => {

@@ -10,7 +10,7 @@ const createMockPage = (
     metaTags: Array<{ name?: string; property?: string; content?: string }> = []
 ) => ({
     $$eval: jest.fn().mockImplementation((selector, callback) => {
-        if (selector === 'meta[name], meta[property]') {
+        if (selector === 'meta') {
             return Promise.resolve(
                 callback(
                     metaTags.map(tag => ({
@@ -168,8 +168,8 @@ describe('MetaTagService', () => {
             expect(result).toEqual({
                 canonical: 'https://example.com/canonical',
                 alternate: [
-                    { href: 'https://example.com/fr', hreflang: 'fr' },
-                    { href: 'https://example.com/es', hreflang: 'es' },
+                    { href: 'https://example.com/fr', hreflang: 'fr', media: null, type: null },
+                    { href: 'https://example.com/es', hreflang: 'es', media: null, type: null },
                 ],
             });
         });
@@ -207,7 +207,9 @@ describe('MetaTagService', () => {
 
         it('should return empty object when no special links found', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockResolvedValue([]),
+                $$eval: jest
+                    .fn()
+                    .mockImplementation((selector, callback) => Promise.resolve(callback([]))),
             };
 
             const result = await extractSpecialLinks(mockPage as any);
@@ -218,7 +220,7 @@ describe('MetaTagService', () => {
     describe('detectDataNoSnippet', () => {
         it('should return true when data-nosnippet elements exist', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockResolvedValue([{ tagName: 'DIV' }]),
+                $eval: jest.fn().mockResolvedValue(true),
             };
 
             const result = await detectDataNoSnippet(mockPage as any);
@@ -227,7 +229,7 @@ describe('MetaTagService', () => {
 
         it('should return false when no data-nosnippet elements exist', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockResolvedValue([]),
+                $eval: jest.fn().mockResolvedValue(false),
             };
 
             const result = await detectDataNoSnippet(mockPage as any);
@@ -236,7 +238,7 @@ describe('MetaTagService', () => {
 
         it('should handle errors gracefully', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockRejectedValue(new Error('Page error')),
+                $eval: jest.fn().mockRejectedValue(new Error('Page error')),
             };
 
             const result = await detectDataNoSnippet(mockPage as any);

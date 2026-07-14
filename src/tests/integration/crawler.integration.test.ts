@@ -1,15 +1,16 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { Actor } from 'apify';
-import { PlaywrightCrawler } from 'crawlee';
 
-// Mock dependencies
+// jest.mock('apify', ...) / jest.mock('crawlee', ...) do not intercept ESM imports under the
+// ts-jest ESM preset used by this project, so the modules under test must be dynamically
+// imported after registering the mocks via jest.unstable_mockModule (see
+// src/tests/config/apifyConfig.test.ts for the same pattern).
 const mockInit = jest.fn();
 const mockSetStatusMessage = jest.fn();
 const mockPushData = jest.fn();
 const mockExit = jest.fn();
 const mockFail = jest.fn();
 
-jest.mock('apify', () => ({
+jest.unstable_mockModule('apify', () => ({
     Actor: {
         init: mockInit,
         setStatusMessage: mockSetStatusMessage,
@@ -20,12 +21,12 @@ jest.mock('apify', () => ({
 }));
 
 const mockPlaywrightCrawler = jest.fn();
-jest.mock('crawlee', () => ({
+jest.unstable_mockModule('crawlee', () => ({
     PlaywrightCrawler: mockPlaywrightCrawler,
 }));
 
-jest.mock('../../services/config/configService.js');
-jest.mock('../../services/storageService.js');
+const { Actor } = await import('apify');
+const { PlaywrightCrawler } = await import('crawlee');
 
 describe('Crawler Integration Tests', () => {
     beforeEach(() => {
@@ -61,9 +62,6 @@ describe('Crawler Integration Tests', () => {
                 copyTodomainStorage: jest.fn().mockResolvedValue(undefined),
                 cleanupDefaultFolders: jest.fn(),
             };
-            jest.doMock('../../services/storageService.js', () => ({
-                storageService: mockStorageService,
-            }));
 
             // Mock config service
             const mockConfig = {

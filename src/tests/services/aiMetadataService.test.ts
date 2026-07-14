@@ -38,7 +38,19 @@ const createMockPage = (
         }
         return Promise.resolve(null);
     }),
-    evaluate: jest.fn().mockResolvedValue({}),
+    // extractContentMetrics/extractImages call page.evaluate(fn) with a zero-argument fn that
+    // reads the real browser `document` — there's no DOM to run that against under Jest's node
+    // test environment, so this mock computes the same result extractContentMetrics's real
+    // callback would, from the pageContent/headings fixtures, instead of executing the callback.
+    evaluate: jest.fn().mockImplementation(() => {
+        const wordCount = pageContent.trim() === '' ? 0 : pageContent.trim().split(/\s+/).length;
+        const readingTime = `${Math.ceil(wordCount / 200)} min`;
+        const headingStructure = headings.map(h => ({
+            level: parseInt(h.tagName.substring(1)),
+            text: h.textContent?.trim() ?? '',
+        }));
+        return Promise.resolve({ wordCount, readingTime, headingStructure });
+    }),
 });
 
 describe('AIMetadataService', () => {
@@ -115,6 +127,7 @@ describe('AIMetadataService', () => {
                                 if (attr === 'itemprop') return 'headline';
                                 return null;
                             },
+                            tagName: 'SPAN',
                             textContent: 'Test Headline',
                         },
                     ]),
@@ -126,7 +139,7 @@ describe('AIMetadataService', () => {
 
             expect(result).toHaveLength(1);
             expect(result[0]).toEqual({
-                type: 'https://schema.org/Article',
+                type: ['https://schema.org/Article'],
                 properties: {
                     headline: 'Test Headline',
                 },
@@ -143,46 +156,47 @@ describe('AIMetadataService', () => {
 
     describe('extractCustomMetadata', () => {
         it('should extract AI-specific metadata from meta tags', async () => {
+            const metas = [
+                { name: 'department', content: 'engineering' },
+                { name: 'category', content: 'technology' },
+                { name: 'rating', content: '4.5' },
+                { name: 'ai-priority', content: 'high' },
+            ];
             const mockPage = {
-                $$eval: jest.fn().mockImplementation(selector => {
-                    if (selector === 'meta[name^="ai:"], meta[name^="custom:"]') {
+                $$eval: jest.fn().mockImplementation((selector, callback) => {
+                    if (selector === 'meta') {
                         return Promise.resolve(
-                            [
-                                {
+                            callback(
+                                metas.map(m => ({
                                     getAttribute: (attr: string) =>
-                                        attr === 'name' ? 'ai:department' : 'engineering',
-                                },
-                                {
-                                    getAttribute: (attr: string) =>
-                                        attr === 'name' ? 'ai:category' : 'technology',
-                                },
-                                {
-                                    getAttribute: (attr: string) =>
-                                        attr === 'name' ? 'custom:rating' : '4.5',
-                                },
-                            ].map(tag => ({
-                                getAttribute: tag.getAttribute,
-                                name: tag.getAttribute('name'),
-                                content: tag.getAttribute('content'),
-                            }))
+                                        attr === 'name'
+                                            ? m.name
+                                            : attr === 'content'
+                                              ? m.content
+                                              : null,
+                                }))
+                            )
                         );
                     }
-                    return Promise.resolve([]);
+                    return Promise.resolve(callback([]));
                 }),
             };
 
             const result = await extractCustomMetadata(mockPage as any);
 
             expect(result).toEqual({
-                'ai:department': 'engineering',
-                'ai:category': 'technology',
-                'custom:rating': '4.5',
+                department: 'engineering',
+                category: 'technology',
+                rating: 4.5,
+                'ai-priority': 'high',
             });
         });
 
         it('should return empty object when no custom metadata found', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockResolvedValue([]),
+                $$eval: jest
+                    .fn()
+                    .mockImplementation((selector, callback) => Promise.resolve(callback([]))),
             };
 
             const result = await extractCustomMetadata(mockPage as any);
@@ -193,46 +207,49 @@ describe('AIMetadataService', () => {
     describe('extractPageMapData', () => {
         it('should extract PageMap data from meta tags', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockImplementation(selector => {
-                    if (selector === 'meta[name^="pagemap:"]') {
+                $$eval: jest.fn().mockImplementation((selector, callback) => {
+                    if (selector === 'meta[name^="pagemap-"]') {
+                        const metas = [
+                            { name: 'pagemap-image', content: 'https://example.com/image.jpg' },
+                            { name: 'pagemap-category', content: 'news' },
+                        ];
                         return Promise.resolve(
-                            [
-                                {
+                            callback(
+                                metas.map(m => ({
                                     getAttribute: (attr: string) =>
                                         attr === 'name'
-                                            ? 'pagemap:image'
-                                            : 'https://example.com/image.jpg',
-                                },
-                                {
-                                    getAttribute: (attr: string) =>
-                                        attr === 'name' ? 'pagemap:category' : 'news',
-                                },
-                            ].map(tag => ({
-                                getAttribute: tag.getAttribute,
-                                name: tag.getAttribute('name'),
-                                content: tag.getAttribute('content'),
-                            }))
+                                            ? m.name
+                                            : attr === 'content'
+                                              ? m.content
+                                              : null,
+                                }))
+                            )
                         );
                     }
-                    return Promise.resolve([]);
+                    return Promise.resolve(callback([]));
                 }),
             };
 
             const result = await extractPageMapData(mockPage as any);
 
             expect(result).toEqual({
-                'pagemap:image': 'https://example.com/image.jpg',
-                'pagemap:category': 'news',
+                attributes: {
+                    image: 'https://example.com/image.jpg',
+                    category: 'news',
+                },
+                dataObjects: [],
             });
         });
 
         it('should return empty object when no PageMap data found', async () => {
             const mockPage = {
-                $$eval: jest.fn().mockResolvedValue([]),
+                $$eval: jest
+                    .fn()
+                    .mockImplementation((selector, callback) => Promise.resolve(callback([]))),
             };
 
             const result = await extractPageMapData(mockPage as any);
-            expect(result).toEqual({});
+            expect(result).toEqual({ attributes: {}, dataObjects: [] });
         });
     });
 
@@ -256,9 +273,9 @@ describe('AIMetadataService', () => {
             expect(result.wordCount).toBe(13); // Number of words in test content
             expect(result.readingTime).toContain('min'); // Should include 'min' in reading time
             expect(result.headingStructure).toEqual([
-                { level: 'H1', text: 'Main Title' },
-                { level: 'H2', text: 'Subtitle' },
-                { level: 'H3', text: 'Sub-subtitle' },
+                { level: 1, text: 'Main Title' },
+                { level: 2, text: 'Subtitle' },
+                { level: 3, text: 'Sub-subtitle' },
             ]);
         });
 
