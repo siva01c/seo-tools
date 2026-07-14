@@ -42,7 +42,12 @@ type Finding = {
     locator: string; // id/class hint to find it in the page
     snippet: string; // truncated outerHTML
 };
-type PageReport = { page: string; title?: string; counts: Record<Category, number>; findings: Finding[] };
+type PageReport = {
+    page: string;
+    title?: string;
+    counts: Record<Category, number>;
+    findings: Finding[];
+};
 
 const args = process.argv.slice(2);
 const getArg = (name: string): string | undefined => {
@@ -171,11 +176,19 @@ for (const domain of domainsToProcess) {
         .map(l => JSON.parse(l));
 
     // Restrict to the most recent crawlDate (merged JSONL accumulates all dates).
-    const dates = [...new Set(allPages.map(p => p._metadata?.crawlDate).filter((d): d is string => !!d))];
-    const latestDate = dates.sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b))).at(-1);
-    const pages = latestDate ? allPages.filter(p => p._metadata?.crawlDate === latestDate) : allPages;
+    const dates = [
+        ...new Set(allPages.map(p => p._metadata?.crawlDate).filter((d): d is string => !!d)),
+    ];
+    const latestDate = dates
+        .sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b)))
+        .at(-1);
+    const pages = latestDate
+        ? allPages.filter(p => p._metadata?.crawlDate === latestDate)
+        : allPages;
     if (latestDate)
-        console.log(`   crawlDate ${latestDate} (${pages.length}/${allPages.length} records across ${dates.length} date(s))`);
+        console.log(
+            `   crawlDate ${latestDate} (${pages.length}/${allPages.length} records across ${dates.length} date(s))`
+        );
 
     const seen = new Set<string>();
     const pageReports: PageReport[] = [];
@@ -221,7 +234,8 @@ for (const domain of domainsToProcess) {
 
     // Aggregate
     const totals: Record<Category, number> = { empty: 0, missing: 0, hash: 0, javascript: 0 };
-    for (const pr of pageReports) for (const c of Object.keys(totals) as Category[]) totals[c] += pr.counts[c];
+    for (const pr of pageReports)
+        for (const c of Object.keys(totals) as Category[]) totals[c] += pr.counts[c];
 
     pageReports.sort(
         (a, b) =>
@@ -238,14 +252,24 @@ for (const domain of domainsToProcess) {
     const defectPages = pageReports.filter(p => p.counts.empty + p.counts.missing > 0).length;
     console.log(`   pages with empty/missing href: ${defectPages}`);
 
-    const reportDir = outputArg ? undefined : join(reportsRoot, domain, getLatestDatasetDate(domain));
+    const reportDir = outputArg
+        ? undefined
+        : join(reportsRoot, domain, getLatestDatasetDate(domain));
     if (reportDir) ensureDir(reportDir);
-    const outPath = outputArg ?? join(reportDir!, `empty-href-${getLatestDatasetDate(domain)}.json`);
+    const outPath =
+        outputArg ?? join(reportDir!, `empty-href-${getLatestDatasetDate(domain)}.json`);
 
     writeFileSync(
         outPath,
         JSON.stringify(
-            { domain, crawlDate: getLatestDatasetDate(domain), logicalPages, pagesWithHtml: withHtml, totals, pages: pageReports },
+            {
+                domain,
+                crawlDate: getLatestDatasetDate(domain),
+                logicalPages,
+                pagesWithHtml: withHtml,
+                totals,
+                pages: pageReports,
+            },
             null,
             2
         )
@@ -256,7 +280,11 @@ for (const domain of domainsToProcess) {
     const rows = [['page', 'category', 'raw_href', 'text', 'locator', 'snippet'].join(',')];
     for (const pr of pageReports)
         for (const f of pr.findings)
-            rows.push([pr.page, f.category, f.rawHref ?? '(missing)', f.text, f.locator, f.snippet].map(esc).join(','));
+            rows.push(
+                [pr.page, f.category, f.rawHref ?? '(missing)', f.text, f.locator, f.snippet]
+                    .map(esc)
+                    .join(',')
+            );
     writeFileSync(csvPath, rows.join('\n') + '\n');
 
     console.log(`   ✅ JSON: ${outPath}`);
@@ -267,8 +295,12 @@ for (const domain of domainsToProcess) {
     if (defects.length) {
         console.log(`\n   ── pages with empty/missing href (top ${defects.length}) ──`);
         for (const pr of defects) {
-            console.log(`     ${pr.counts.empty}× empty, ${pr.counts.missing}× missing  ${pr.page}`);
-            for (const f of pr.findings.filter(x => x.category === 'empty' || x.category === 'missing').slice(0, 3)) {
+            console.log(
+                `     ${pr.counts.empty}× empty, ${pr.counts.missing}× missing  ${pr.page}`
+            );
+            for (const f of pr.findings
+                .filter(x => x.category === 'empty' || x.category === 'missing')
+                .slice(0, 3)) {
                 console.log(`        [${f.category}] "${f.text || '(no text)'}"  ${f.locator}`);
                 console.log(`            ${f.snippet}`);
             }

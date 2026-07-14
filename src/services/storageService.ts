@@ -24,7 +24,7 @@ export class StorageService {
         customDateFolder?: string | null
     ): IStorageConfig {
         const domain = this.extractDomain(targetUrl);
-        const dateFolder = customDateFolder || this.getCurrentDateFolder();
+        const dateFolder = customDateFolder ?? this.getCurrentDateFolder();
 
         this.config = {
             basePath,

@@ -26,7 +26,14 @@
  * reported as before.
  */
 
-import { createReadStream, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import {
+    createReadStream,
+    existsSync,
+    mkdirSync,
+    readdirSync,
+    readFileSync,
+    writeFileSync,
+} from 'fs';
 import { createInterface } from 'readline';
 import { join } from 'path';
 
@@ -153,8 +160,24 @@ const isInternal = (target: string, pageHost: string): boolean => {
 };
 
 // --- Probe ---------------------------------------------------------------
-const probe = async (url: string): Promise<{ status: number | null; statusText?: string; method: string; error?: string; redirectedTo?: string }> => {
-    const attempt = async (method: 'HEAD' | 'GET'): Promise<{ status: number | null; statusText?: string; method: string; error?: string; redirectedTo?: string }> => {
+const probe = async (
+    url: string
+): Promise<{
+    status: number | null;
+    statusText?: string;
+    method: string;
+    error?: string;
+    redirectedTo?: string;
+}> => {
+    const attempt = async (
+        method: 'HEAD' | 'GET'
+    ): Promise<{
+        status: number | null;
+        statusText?: string;
+        method: string;
+        error?: string;
+        redirectedTo?: string;
+    }> => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
         try {
@@ -181,7 +204,7 @@ const probe = async (url: string): Promise<{ status: number | null; statusText?:
         }
     };
 
-    let r = await attempt('HEAD');
+    const r = await attempt('HEAD');
     // Many servers mishandle HEAD (405/501) or return network error; retry with GET.
     if (r.status === null || r.status === 405 || r.status === 501 || r.status === 403) {
         const g = await attempt('GET');
@@ -193,7 +216,11 @@ const probe = async (url: string): Promise<{ status: number | null; statusText?:
     return r;
 };
 
-const runPool = async <T, R>(items: T[], limit: number, fn: (item: T, idx: number) => Promise<R>): Promise<R[]> => {
+const runPool = async <T, R>(
+    items: T[],
+    limit: number,
+    fn: (item: T, idx: number) => Promise<R>
+): Promise<R[]> => {
     const results: R[] = new Array(items.length);
     let next = 0;
     let done = 0;
@@ -219,7 +246,7 @@ const ensureDir = (dir: string): void => {
 };
 
 // --- Main ----------------------------------------------------------------
-(async () => {
+const run = async (): Promise<void> => {
     for (const domain of domainsToProcess) {
         const file = fileArg ?? resolveJsonl(domain);
         if (!file || !existsSync(file)) {
@@ -230,7 +257,12 @@ const ensureDir = (dir: string): void => {
 
         // Build target map: normalized URL -> {kinds, referrers}
         const targets = new Map<string, Target>();
-        const add = (rawUrl: string, base: string, kind: RefKind, ref: Omit<Referrer, 'kind'>): void => {
+        const add = (
+            rawUrl: string,
+            base: string,
+            kind: RefKind,
+            ref: Omit<Referrer, 'kind'>
+        ): void => {
             const norm = normalize(rawUrl, base);
             if (!norm) return;
             const t = targets.get(norm) ?? { url: norm, kinds: new Set<RefKind>(), referrers: [] };
@@ -254,20 +286,46 @@ const ensureDir = (dir: string): void => {
                 continue;
             }
             pagesCount++;
-            if (!firstUrl) firstUrl = page.url;
+            firstUrl ??= page.url;
             const base = page.url;
             for (const l of page.links?.internal ?? []) {
-                if (l.href) add(l.href, base, 'internal-link', { pageUrl: page.url, pageTitle: page.title, text: l.text });
+                if (l.href)
+                    add(l.href, base, 'internal-link', {
+                        pageUrl: page.url,
+                        pageTitle: page.title,
+                        text: l.text,
+                    });
             }
             if (!skipExternal) {
                 for (const l of page.links?.external ?? []) {
-                    if (l.href) add(l.href, base, 'external-link', { pageUrl: page.url, pageTitle: page.title, text: l.text });
+                    if (l.href)
+                        add(l.href, base, 'external-link', {
+                            pageUrl: page.url,
+                            pageTitle: page.title,
+                            text: l.text,
+                        });
                 }
             }
             for (const img of page.images ?? []) {
-                if (img.src) add(img.src, base, 'image', { pageUrl: page.url, pageTitle: page.title, text: img.alt });
-                for (const u of srcsetUrls(img.srcset, base)) add(u, base, 'image', { pageUrl: page.url, pageTitle: page.title, text: img.alt });
-                for (const s of img.sources ?? []) for (const u of srcsetUrls(s.srcset, base)) add(u, base, 'image', { pageUrl: page.url, pageTitle: page.title, text: img.alt });
+                if (img.src)
+                    add(img.src, base, 'image', {
+                        pageUrl: page.url,
+                        pageTitle: page.title,
+                        text: img.alt,
+                    });
+                for (const u of srcsetUrls(img.srcset, base))
+                    add(u, base, 'image', {
+                        pageUrl: page.url,
+                        pageTitle: page.title,
+                        text: img.alt,
+                    });
+                for (const s of img.sources ?? [])
+                    for (const u of srcsetUrls(s.srcset, base))
+                        add(u, base, 'image', {
+                            pageUrl: page.url,
+                            pageTitle: page.title,
+                            text: img.alt,
+                        });
             }
         }
 
@@ -310,7 +368,9 @@ const ensureDir = (dir: string): void => {
         // false "fetch failed" results; a calm sequential retry corrects them.
         const netFails = probed.filter(p => p.status === null);
         if (netFails.length) {
-            console.log(`   re-verifying ${netFails.length} network-error target(s) sequentially...`);
+            console.log(
+                `   re-verifying ${netFails.length} network-error target(s) sequentially...`
+            );
             let recovered = 0;
             for (const p of netFails) {
                 const r = await probe(p.url);
@@ -323,11 +383,14 @@ const ensureDir = (dir: string): void => {
                     if (r.status < 400) recovered++;
                 }
             }
-            console.log(`   re-verify: ${recovered} recovered to <400, ${netFails.length - recovered} still failing`);
+            console.log(
+                `   re-verify: ${recovered} recovered to <400, ${netFails.length - recovered} still failing`
+            );
         }
 
         const isBroken = (p: ProbeResult): boolean => p.status === null || p.status >= 400;
-        const matches = onlyStatus !== null ? (p: ProbeResult): boolean => p.status === onlyStatus : isBroken;
+        const matches =
+            onlyStatus !== null ? (p: ProbeResult): boolean => p.status === onlyStatus : isBroken;
         const broken = probed.filter(matches);
 
         // In --status mode, also fold in pages the crawler itself hit with this status.
@@ -361,14 +424,23 @@ const ensureDir = (dir: string): void => {
                             status: onlyStatus,
                             method: 'crawl-record',
                             kinds: ['internal-link'],
-                            referrers: [{ pageUrl: norm, text: '(crawled directly)', kind: 'internal-link' }],
+                            referrers: [
+                                {
+                                    pageUrl: norm,
+                                    text: '(crawled directly)',
+                                    kind: 'internal-link',
+                                },
+                            ],
                         });
                         foldedIn++;
                     }
                 } catch {
                     /* ignore malformed index */
                 }
-                if (foldedIn) console.log(`   folded in ${foldedIn} page(s) the crawler hit with ${onlyStatus} (from url-index)`);
+                if (foldedIn)
+                    console.log(
+                        `   folded in ${foldedIn} page(s) the crawler hit with ${onlyStatus} (from url-index)`
+                    );
             }
         }
 
@@ -377,13 +449,20 @@ const ensureDir = (dir: string): void => {
         // status distribution
         const dist = new Map<string, number>();
         for (const p of probed) {
-            const key = p.status === null ? `ERR:${(p.error ?? 'unknown').split(':')[0]}` : String(p.status);
+            const key =
+                p.status === null
+                    ? `ERR:${(p.error ?? 'unknown').split(':')[0]}`
+                    : String(p.status);
             dist.set(key, (dist.get(key) ?? 0) + 1);
         }
 
-        const brokenInternalLinks = broken.filter(b => b.kinds.includes('internal-link') && isInternal(b.url, pageHost));
+        const brokenInternalLinks = broken.filter(
+            b => b.kinds.includes('internal-link') && isInternal(b.url, pageHost)
+        );
         const brokenImages = broken.filter(b => b.kinds.includes('image'));
-        const brokenExternal = broken.filter(b => !isInternal(b.url, pageHost) && !b.kinds.includes('image'));
+        const brokenExternal = broken.filter(
+            b => !isInternal(b.url, pageHost) && !b.kinds.includes('image')
+        );
 
         // --- Report ---
         console.log(`\n   ── status distribution ──`);
@@ -395,10 +474,13 @@ const ensureDir = (dir: string): void => {
         console.log(`     images         : ${brokenImages.length}`);
         console.log(`     external links : ${brokenExternal.length}`);
 
-        const reportDir = outputArg ? undefined : join(reportsRoot, domain, getLatestDatasetDate(domain));
+        const reportDir = outputArg
+            ? undefined
+            : join(reportsRoot, domain, getLatestDatasetDate(domain));
         if (reportDir) ensureDir(reportDir);
         const reportBase = onlyStatus !== null ? `${onlyStatus}-report` : 'broken-links';
-        const outPath = outputArg ?? join(reportDir!, `${reportBase}-${getLatestDatasetDate(domain)}.json`);
+        const outPath =
+            outputArg ?? join(reportDir!, `${reportBase}-${getLatestDatasetDate(domain)}.json`);
 
         const report = {
             domain,
@@ -427,11 +509,25 @@ const ensureDir = (dir: string): void => {
 
         // CSV
         const csvPath = outPath.replace(/\.json$/, '.csv');
-        const rows = [['target', 'status', 'kind', 'method', 'error', 'ref_page', 'link_text'].join(',')];
+        const rows = [
+            ['target', 'status', 'kind', 'method', 'error', 'ref_page', 'link_text'].join(','),
+        ];
         const esc = (v: unknown): string => `"${String(v ?? '').replace(/"/g, '""')}"`;
         for (const b of broken) {
             for (const r of b.referrers) {
-                rows.push([b.url, b.status ?? 'ERR', r.kind, b.method, b.error ?? '', r.pageUrl, r.text ?? ''].map(esc).join(','));
+                rows.push(
+                    [
+                        b.url,
+                        b.status ?? 'ERR',
+                        r.kind,
+                        b.method,
+                        b.error ?? '',
+                        r.pageUrl,
+                        r.text ?? '',
+                    ]
+                        .map(esc)
+                        .join(',')
+                );
             }
         }
         writeFileSync(csvPath, rows.join('\n') + '\n');
@@ -446,11 +542,20 @@ const ensureDir = (dir: string): void => {
             for (const b of critical) {
                 console.log(`     [${b.status ?? b.error}] ${b.kinds.join('/')}  ${b.url}`);
                 const sample = b.referrers.slice(0, 3);
-                for (const r of sample) console.log(`        ↳ on ${r.pageUrl}${r.text ? `  ("${r.text.slice(0, 60)}")` : ''}`);
-                if (b.referrers.length > 3) console.log(`        ↳ … +${b.referrers.length - 3} more page(s)`);
+                for (const r of sample)
+                    console.log(
+                        `        ↳ on ${r.pageUrl}${r.text ? `  ("${r.text.slice(0, 60)}")` : ''}`
+                    );
+                if (b.referrers.length > 3)
+                    console.log(`        ↳ … +${b.referrers.length - 3} more page(s)`);
             }
         } else {
             console.log(`\n   ✅ No broken internal links or images detected.`);
         }
     }
-})();
+};
+
+run().catch(error => {
+    console.error(error);
+    process.exit(1);
+});
