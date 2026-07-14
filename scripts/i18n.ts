@@ -276,6 +276,7 @@ export interface ISeoIssuesMessages {
     csvOgComplete: string[];
     csvTwitterCard: string[];
     csvRedirectClass: string[];
+    csvRedirect3xx: string[];
     sumHeader: string;
     sumMetaDesc: string;
     sumTitle: string;
@@ -285,6 +286,7 @@ export interface ISeoIssuesMessages {
     sumOgComplete: string;
     sumTwitterCard: string;
     sumRedirectClass: string;
+    sumRedirect3xx: string;
     sumWritten: string;
 }
 
@@ -533,14 +535,15 @@ const en: IMessages = {
         roadmapFixBroken: n => `Fix ${n} broken links (non-200 pages)`,
     },
     seoIssues: {
-        csvMetaDesc: ['url', 'title', 'issue', 'value', 'length', 'duplicate_urls'],
-        csvTitle: ['url', 'issue', 'value', 'length', 'duplicate_urls'],
+        csvMetaDesc: ['url', 'title', 'issue', 'value', 'length', 'pixel_width', 'duplicate_urls'],
+        csvTitle: ['url', 'issue', 'value', 'length', 'pixel_width', 'duplicate_urls'],
         csvH1: ['url', 'title', 'issue', 'h1_values', 'duplicate_urls'],
         csvOrphan: ['url', 'title', 'timestamp'],
         csvJsonLd: ['url', 'title', 'issue', 'types_found'],
         csvOgComplete: ['url', 'title', 'present', 'missing'],
         csvTwitterCard: ['url', 'title'],
         csvRedirectClass: ['url', 'redirects_to', 'category'],
+        csvRedirect3xx: ['url', 'status', 'redirects_to'],
         sumHeader: '📊 Summary',
         sumMetaDesc: 'Meta description issues',
         sumTitle: 'Title issues',
@@ -549,6 +552,7 @@ const en: IMessages = {
         sumJsonLd: 'JSON-LD issues',
         sumOgComplete: 'Open Graph incomplete',
         sumTwitterCard: 'Twitter Card missing',
+        sumRedirect3xx: '3xx redirects',
         sumRedirectClass: 'Redirect classification',
         sumWritten: 'Reports written to',
     },
@@ -808,14 +812,23 @@ const cs: IMessages = {
         roadmapFixBroken: n => `Opravit ${n} nefunkčních odkazů (stránky bez stavu 200)`,
     },
     seoIssues: {
-        csvMetaDesc: ['url', 'titulek', 'problem', 'hodnota', 'delka', 'duplicitni_url'],
-        csvTitle: ['url', 'problem', 'hodnota', 'delka', 'duplicitni_url'],
+        csvMetaDesc: [
+            'url',
+            'titulek',
+            'problem',
+            'hodnota',
+            'delka',
+            'sirka_px',
+            'duplicitni_url',
+        ],
+        csvTitle: ['url', 'problem', 'hodnota', 'delka', 'sirka_px', 'duplicitni_url'],
         csvH1: ['url', 'titulek', 'problem', 'h1_hodnoty', 'duplicitni_url'],
         csvOrphan: ['url', 'titulek', 'casova_znacka'],
         csvJsonLd: ['url', 'titulek', 'problem', 'nalezene_typy'],
         csvOgComplete: ['url', 'titulek', 'pritomne', 'chybejici'],
         csvTwitterCard: ['url', 'titulek'],
         csvRedirectClass: ['url', 'presmerovano_na', 'kategorie'],
+        csvRedirect3xx: ['url', 'stav', 'presmerovano_na'],
         sumHeader: '📊 Souhrn',
         sumMetaDesc: 'Problémy s meta popisem',
         sumTitle: 'Problémy s titulkem',
@@ -825,6 +838,7 @@ const cs: IMessages = {
         sumOgComplete: 'Neúplné Open Graph značky',
         sumTwitterCard: 'Chybějící Twitter Card',
         sumRedirectClass: 'Klasifikace přesměrování',
+        sumRedirect3xx: 'Přesměrování 3xx',
         sumWritten: 'Reporty zapsány do',
     },
     report404: {

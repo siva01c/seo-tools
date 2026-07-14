@@ -7,6 +7,10 @@ import {
     findMissingTwitterCard,
     findUrlsInMultipleSitemaps,
     classifyRedirects,
+    find3xxRedirects,
+    estimatePixelWidth,
+    TITLE_MAX_PIXEL_WIDTH,
+    META_DESCRIPTION_MAX_PIXEL_WIDTH,
     OG_REQUIRED_FIELDS,
 } from '../../services/issueChecksService.js';
 import { buildReverseLinkGraph } from '../../services/linkGraphService.js';
@@ -267,6 +271,77 @@ describe('issueChecksService', () => {
         it('ignores non-redirect pages', () => {
             const pages = [{ url: 'https://example.com/', response: { status: 200 } }];
             expect(classifyRedirects(pages)).toEqual([]);
+        });
+    });
+
+    describe('find3xxRedirects', () => {
+        it('flags a 301 page with its status and redirect target', () => {
+            const pages = [
+                {
+                    url: 'https://example.com/old',
+                    response: { status: 301, url: 'https://example.com/new' },
+                },
+            ];
+            expect(find3xxRedirects(pages)).toEqual([
+                {
+                    url: 'https://example.com/old',
+                    status: 301,
+                    redirectsTo: 'https://example.com/new',
+                },
+            ]);
+        });
+
+        it('does not flag 200 or 404 pages', () => {
+            const pages = [
+                { url: 'https://example.com/', response: { status: 200 } },
+                { url: 'https://example.com/missing', response: { status: 404 } },
+            ];
+            expect(find3xxRedirects(pages)).toEqual([]);
+        });
+
+        it('matches classifyRedirects on the same 3xx status-range boundary', () => {
+            const pages = [
+                { url: 'https://example.com/a', response: { status: 300 } },
+                { url: 'https://example.com/b', response: { status: 399 } },
+                { url: 'https://example.com/c', response: { status: 400 } },
+            ];
+            expect(find3xxRedirects(pages)).toHaveLength(2);
+            expect(classifyRedirects(pages)).toHaveLength(2);
+        });
+    });
+
+    describe('estimatePixelWidth', () => {
+        it('returns 0 for an empty string', () => {
+            expect(estimatePixelWidth('')).toBe(0);
+        });
+
+        it('estimates a longer string as wider than a shorter one', () => {
+            expect(estimatePixelWidth('short')).toBeLessThan(
+                estimatePixelWidth('a much longer title string')
+            );
+        });
+
+        it('estimates a known string within a reasonable range of its hand-computed width', () => {
+            // 'W' is 17px and 'M' is 15px in the ARIAL_CHAR_WIDTHS_PX table.
+            expect(estimatePixelWidth('WM')).toBe(32);
+        });
+    });
+
+    describe('title/meta-description pixel-width thresholds', () => {
+        it('TITLE_MAX_PIXEL_WIDTH and META_DESCRIPTION_MAX_PIXEL_WIDTH match the Ahrefs report thresholds', () => {
+            expect(TITLE_MAX_PIXEL_WIDTH).toBe(579);
+            expect(META_DESCRIPTION_MAX_PIXEL_WIDTH).toBe(919);
+        });
+
+        it('flags a title that exceeds the pixel width even while under the 60-character limit', () => {
+            const wideTitle = 'W'.repeat(35); // 35 chars (under 60), but 35*17=595px (over 579px)
+            expect(wideTitle.length).toBeLessThanOrEqual(60);
+            expect(estimatePixelWidth(wideTitle)).toBeGreaterThan(TITLE_MAX_PIXEL_WIDTH);
+        });
+
+        it('does not flag a narrow title under the pixel threshold even if long in characters', () => {
+            const narrowTitle = 'i'.repeat(60); // 60 chars but each 'i' is only 4px = 240px
+            expect(estimatePixelWidth(narrowTitle)).toBeLessThan(TITLE_MAX_PIXEL_WIDTH);
         });
     });
 });

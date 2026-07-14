@@ -203,3 +203,128 @@ export const classifyRedirects = (pages: Page[]): IHttpsRedirectIssue[] => {
     }
     return issues;
 };
+
+// ── 3xx redirect count ───────────────────────────────────────────────────────
+
+export interface I3xxRedirectIssue {
+    url: string;
+    status: number;
+    redirectsTo?: string;
+}
+
+/** Flat list of every crawled page returning a 3xx status, with its exact status code and
+ * redirect target — a plain count/inventory, distinct from classifyRedirects()'s http->https
+ * categorization above. */
+export const find3xxRedirects = (pages: Page[]): I3xxRedirectIssue[] => {
+    const issues: I3xxRedirectIssue[] = [];
+    for (const page of pages) {
+        const status = page.response?.status;
+        if (typeof status !== 'number' || status < 300 || status >= 400) continue;
+        issues.push({ url: page.url, status, redirectsTo: page.response?.url });
+    }
+    return issues;
+};
+
+// ── Pixel-width title / meta description ────────────────────────────────────
+
+// Approximate Arial 16px character widths (px), the same class of approximation Ahrefs/Moz-style
+// tools use to estimate SERP title/description truncation offline (there is no live browser page
+// or canvas/text-measurement library available at report-generation time — reports are generated
+// from already-crawled JSONL). Widths are rounded averages from published Arial metrics tables.
+export const ARIAL_CHAR_WIDTHS_PX: Record<string, number> = {
+    a: 9,
+    b: 9,
+    c: 8,
+    d: 9,
+    e: 9,
+    f: 5,
+    g: 9,
+    h: 9,
+    i: 4,
+    j: 4,
+    k: 8,
+    l: 4,
+    m: 14,
+    n: 9,
+    o: 9,
+    p: 9,
+    q: 9,
+    r: 6,
+    s: 8,
+    t: 5,
+    u: 9,
+    v: 8,
+    w: 12,
+    x: 8,
+    y: 8,
+    z: 8,
+    A: 12,
+    B: 12,
+    C: 13,
+    D: 13,
+    E: 12,
+    F: 11,
+    G: 14,
+    H: 13,
+    I: 5,
+    J: 5,
+    K: 12,
+    L: 10,
+    M: 15,
+    N: 13,
+    O: 14,
+    P: 12,
+    Q: 14,
+    R: 13,
+    S: 12,
+    T: 11,
+    U: 13,
+    V: 12,
+    W: 17,
+    X: 12,
+    Y: 12,
+    Z: 11,
+    '0': 9,
+    '1': 9,
+    '2': 9,
+    '3': 9,
+    '4': 9,
+    '5': 9,
+    '6': 9,
+    '7': 9,
+    '8': 9,
+    '9': 9,
+    ' ': 5,
+    '.': 5,
+    ',': 5,
+    '-': 6,
+    _: 8,
+    ':': 5,
+    ';': 5,
+    '!': 5,
+    '?': 9,
+    "'": 3,
+    '"': 6,
+    '(': 6,
+    ')': 6,
+    '/': 5,
+    '&': 12,
+    '|': 4,
+};
+
+// Fallback width for any character not in ARIAL_CHAR_WIDTHS_PX (e.g. non-Latin scripts).
+export const AVG_CHAR_WIDTH_PX = 8;
+
+export const TITLE_MAX_PIXEL_WIDTH = 579;
+export const META_DESCRIPTION_MAX_PIXEL_WIDTH = 919;
+
+/** Estimates the rendered pixel width of a string at Arial 16px, the way Ahrefs/Moz-style tools
+ * approximate Google SERP title/description truncation. Not exact — a static character-width
+ * table, not real text measurement. */
+export const estimatePixelWidth = (text: string): number => {
+    let width = 0;
+    for (const char of text) {
+        width += ARIAL_CHAR_WIDTHS_PX[char] ?? AVG_CHAR_WIDTH_PX;
+    }
+    return width;
+};

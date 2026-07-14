@@ -8,6 +8,10 @@ import {
     findIncompleteOpenGraph,
     findMissingTwitterCard,
     classifyRedirects,
+    find3xxRedirects,
+    estimatePixelWidth,
+    TITLE_MAX_PIXEL_WIDTH,
+    META_DESCRIPTION_MAX_PIXEL_WIDTH,
 } from '../src/services/issueChecksService.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -165,9 +169,10 @@ console.log('📝 Report 1: Meta description issues');
 type MetaDescIssue = {
     url: string;
     title?: string;
-    issue: 'missing' | 'too_short' | 'too_long' | 'duplicate';
+    issue: 'missing' | 'too_short' | 'too_long' | 'pixel_too_long' | 'duplicate';
     value?: string;
     length?: number;
+    pixelWidth?: number;
     duplicateUrls?: string[];
 };
 
@@ -212,6 +217,17 @@ for (const page of allPages) {
             length: len,
         });
     }
+    const descPixelWidth = estimatePixelWidth(desc);
+    if (descPixelWidth > META_DESCRIPTION_MAX_PIXEL_WIDTH) {
+        metaDescIssues.push({
+            url: page.url,
+            title: page.title,
+            issue: 'pixel_too_long',
+            value: desc,
+            length: len,
+            pixelWidth: Math.round(descPixelWidth),
+        });
+    }
     if (duplicateDescs.has(desc)) {
         const others = (descMap.get(desc) ?? []).filter(p => p.url !== page.url).map(p => p.url);
         metaDescIssues.push({
@@ -239,6 +255,7 @@ if (csvFlag) {
             e.issue,
             e.value ?? '',
             String(e.length ?? ''),
+            String(e.pixelWidth ?? ''),
             (e.duplicateUrls ?? []).join(' | '),
         ]);
     }
@@ -251,9 +268,10 @@ console.log('📝 Report 2: Title tag issues');
 
 type TitleIssue = {
     url: string;
-    issue: 'missing' | 'too_short' | 'too_long' | 'duplicate';
+    issue: 'missing' | 'too_short' | 'too_long' | 'pixel_too_long' | 'duplicate';
     value?: string;
     length?: number;
+    pixelWidth?: number;
     duplicateUrls?: string[];
 };
 
@@ -284,6 +302,16 @@ for (const page of allPages) {
     } else if (len > 60) {
         titleIssues.push({ url: page.url, issue: 'too_long', value: title, length: len });
     }
+    const titlePixelWidth = estimatePixelWidth(title);
+    if (titlePixelWidth > TITLE_MAX_PIXEL_WIDTH) {
+        titleIssues.push({
+            url: page.url,
+            issue: 'pixel_too_long',
+            value: title,
+            length: len,
+            pixelWidth: Math.round(titlePixelWidth),
+        });
+    }
     if (duplicateTitles.has(title)) {
         const others = (titleMap.get(title) ?? []).filter(p => p.url !== page.url).map(p => p.url);
         titleIssues.push({
@@ -306,6 +334,7 @@ if (csvFlag) {
             e.issue,
             e.value ?? '',
             String(e.length ?? ''),
+            String(e.pixelWidth ?? ''),
             (e.duplicateUrls ?? []).join(' | '),
         ]);
     }
@@ -550,6 +579,25 @@ if (csvFlag) {
     writeCsv(`redirect-classification-${dateStamp}.csv`, rows);
 }
 
+// ── Report 9: 3xx redirects ──────────────────────────────────────────────────
+
+console.log('📝 Report 9: 3xx redirects');
+
+const redirect3xxIssues = find3xxRedirects(allPages);
+
+writeJson(`redirect-3xx-${dateStamp}.json`, {
+    total: redirect3xxIssues.length,
+    issues: redirect3xxIssues,
+});
+
+if (csvFlag) {
+    const rows: string[][] = [mi.csvRedirect3xx];
+    for (const e of redirect3xxIssues) {
+        rows.push([e.url, String(e.status), e.redirectsTo ?? '']);
+    }
+    writeCsv(`redirect-3xx-${dateStamp}.csv`, rows);
+}
+
 // ── Summary ───────────────────────────────────────────────────────────────────
 
 console.log(`\n${mi.sumHeader}`);
@@ -561,4 +609,5 @@ console.log(`  ${mi.sumJsonLd}: ${jsonLdIssues.length}`);
 console.log(`  ${mi.sumOgComplete}: ${ogIssues.length}`);
 console.log(`  ${mi.sumTwitterCard}: ${twitterCardIssues.length}`);
 console.log(`  ${mi.sumRedirectClass}: ${redirectClassIssues.length}`);
+console.log(`  ${mi.sumRedirect3xx}: ${redirect3xxIssues.length}`);
 console.log(`\n  ${mi.sumWritten}: ${reportsRoot}`);
