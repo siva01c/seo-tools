@@ -12,6 +12,7 @@
     "crawlee": "^3.0.0",
     "dotenv": "^17.3.1",
     "js-yaml": "^4.1.0",
+    "openai": "^6.47.0",
     "playwright": "^1.54.1"
   },
   "devDependencies": {

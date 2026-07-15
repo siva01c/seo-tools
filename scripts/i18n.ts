@@ -314,12 +314,20 @@ export interface ISitemapIssuesMessages {
     sumWritten: string;
 }
 
+export interface ITitleDescriptionFixesMessages {
+    csvHeader: string[];
+    sumHeader: string;
+    sumGenerated: string;
+    sumWritten: string;
+}
+
 export interface IMessages {
     seoAudit: ISeoAuditMessages;
     seoIssues: ISeoIssuesMessages;
     report404: IReport404Messages;
     linkGraphIssues: ILinkGraphIssuesMessages;
     sitemapIssues: ISitemapIssuesMessages;
+    titleDescriptionFixes: ITitleDescriptionFixesMessages;
 }
 
 // ── English ────────────────────────────────────────────────────────────────────
@@ -590,6 +598,23 @@ const en: IMessages = {
         csvMultiSitemap: ['url', 'sitemaps'],
         sumHeader: '📊 Summary',
         sumMultiSitemap: 'Pages in multiple sitemaps',
+        sumWritten: 'Reports written to',
+    },
+    titleDescriptionFixes: {
+        csvHeader: [
+            'url',
+            'issues',
+            'current_title',
+            'recommended_title',
+            'recommended_title_length',
+            'recommended_title_pixel_width',
+            'current_description',
+            'recommended_description',
+            'recommended_description_length',
+            'recommended_description_pixel_width',
+        ],
+        sumHeader: '📊 Summary',
+        sumGenerated: 'Fixes generated',
         sumWritten: 'Reports written to',
     },
 };
@@ -881,6 +906,23 @@ const cs: IMessages = {
         csvMultiSitemap: ['url', 'sitemapy'],
         sumHeader: '📊 Souhrn',
         sumMultiSitemap: 'Stránky ve více sitemapách',
+        sumWritten: 'Reporty zapsány do',
+    },
+    titleDescriptionFixes: {
+        csvHeader: [
+            'url',
+            'problemy',
+            'soucasny_titulek',
+            'doporuceny_titulek',
+            'doporuceny_titulek_delka',
+            'doporuceny_titulek_sirka_px',
+            'soucasny_popis',
+            'doporuceny_popis',
+            'doporuceny_popis_delka',
+            'doporuceny_popis_sirka_px',
+        ],
+        sumHeader: '📊 Souhrn',
+        sumGenerated: 'Vygenerováno oprav',
         sumWritten: 'Reporty zapsány do',
     },
 };
