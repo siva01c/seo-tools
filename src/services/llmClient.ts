@@ -64,14 +64,28 @@ grounded in the actual page content. Rules:
 - Respond with ONLY a raw JSON object, no markdown code fences, no commentary:
   {"title": "...", "description": "..."} — omit a key entirely if it wasn't requested.`;
 
+export function stripPiiFromText(text: string): string {
+    if (!text) return text;
+    const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+    const phoneRegex =
+        /(?:\+\d{1,3}[\s-]?)?\(?\d{2,4}\)?[\s-]?\d{3,4}[\s-]?\d{3,4}|\b\d{3}[\s-]\d{4}\b/g;
+    return text.replace(emailRegex, '[REDACTED_EMAIL]').replace(phoneRegex, '[REDACTED_PHONE]');
+}
+
 const buildUserPrompt = (input: ITitleDescriptionFixInput): string => {
+    const cleanUrl = input.url;
+    const cleanTitle = stripPiiFromText(input.currentTitle ?? '(missing)');
+    const cleanDesc = stripPiiFromText(input.currentDescription ?? '(missing)');
+    const cleanHeadings = input.headings.map(h => stripPiiFromText(h)).join(' | ') || '(none)';
+    const cleanExcerpt = stripPiiFromText(input.contentExcerpt);
+
     const parts: string[] = [
-        `URL: ${input.url}`,
+        `URL: ${cleanUrl}`,
         `Language: ${input.language}`,
-        `Current title: ${input.currentTitle ?? '(missing)'}`,
-        `Current meta description: ${input.currentDescription ?? '(missing)'}`,
-        `Headings: ${input.headings.join(' | ') || '(none)'}`,
-        `Content excerpt: ${input.contentExcerpt}`,
+        `Current title: ${cleanTitle}`,
+        `Current meta description: ${cleanDesc}`,
+        `Headings: ${cleanHeadings}`,
+        `Content excerpt: ${cleanExcerpt}`,
         '',
         'Requested fixes:',
     ];

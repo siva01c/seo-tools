@@ -162,6 +162,26 @@ setInterval(
     10 * 60 * 1000
 ).unref();
 
+// Automated 90-day data retention purge (runs daily)
+setInterval(
+    () => {
+        try {
+            console.log('[mcp-server] Triggering automated 90-day data retention purge...');
+            const proc = spawn('npx', ['tsx', 'scripts/purge-old-data.ts', '--days', '90'], {
+                cwd: process.cwd(),
+                env: { ...process.env },
+                stdio: 'ignore',
+            });
+            proc.on('close', code => {
+                console.log(`[mcp-server] Data retention purge completed with exit code ${code}`);
+            });
+        } catch (err) {
+            console.error('[mcp-server] Failed to run data retention purge:', err);
+        }
+    },
+    24 * 60 * 60 * 1000
+).unref();
+
 // ── Crawl target validation (blocklist + private-range SSRF check) ───────────
 //
 // The private-IP/DNS check itself lives in services/ssrfGuard.ts and is re-run again,
@@ -900,9 +920,24 @@ const server = http.createServer(async (req, res) => {
 
     const urlPath = req.url ?? '';
 
-    // 1. Health check (No auth)
+    // 1. Health check & Privacy info (No auth)
     if (req.method === 'GET' && urlPath === '/health') {
         return send(200, { status: 'ok', activeJobs: jobs.size });
+    }
+    if (req.method === 'GET' && urlPath === '/api/privacy') {
+        return send(200, {
+            dataController: 'ludek.kvapil@macron.cz',
+            purpose: 'One-time SEO audit report generation and email delivery',
+            emailRetention:
+                'In-memory only for up to 24 hours (JOB_TTL_MS); never persisted to disk.',
+            crawlDataRetentionDays: 90,
+            thirdPartyProcessors: [
+                'Central Mail API (for report email delivery)',
+                'OpenAI (optional title/meta fixes)',
+            ],
+            rightsInfo:
+                'Contact ludek.kvapil@macron.cz for DSAR, data access, or erasure requests.',
+        });
     }
 
     // 2. Public Static Web Server (No auth)
@@ -961,9 +996,16 @@ const server = http.createServer(async (req, res) => {
             const body = await readJsonBody(req, MAX_CRAWL_BODY_BYTES);
             const urlInput = String(body.url ?? '').trim();
             const emailInput = String(body.email ?? '').trim();
+            const consentInput = body.consent;
 
             if (!urlInput || !emailInput) {
                 return send(400, { error: 'url and email are required' });
+            }
+
+            if (consentInput === false) {
+                return send(400, {
+                    error: 'Explicit consent is required to process email address for audit report delivery',
+                });
             }
 
             const rejection = await validateCrawlTarget(urlInput);

@@ -107,6 +107,7 @@ allowlist). This phase closes the remaining gaps, not rebuilds any of that.
       to disk except indirectly (domain name + failure count, not email, in `crawl_alerts.jsonl` on
       3+ consecutive failures). No durable email store exists yet, so no data-subject-deletion path
       is needed yet — revisit at Phase C (persistent accounts).
+- [x] Created dedicated GDPR compliance & remediation roadmap in [`docs/gdpr-compliance-plan.md`](file:///home/siva01/projects/lkv/seo-tools/docs/gdpr-compliance-plan.md), detailing automated retention scheduling, transparency/privacy notices, consent management, DSAR workflows, and LLM PII safeguards.
 - [x] Flagged tenant isolation as a hard Phase C prerequisite in `docs/security.md`: no multi-tenant
       storage exists today (all crawl data in one shared `storage/` tree), so any account/tenant
       model must design per-tenant storage scoping from day one, not retrofit it.

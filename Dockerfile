@@ -8,13 +8,18 @@ RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
 WORKDIR /home/seobot
 
 COPY --chown=seobot package*.json ./
-COPY --chown=seobot tsconfig.json ./
+COPY --chown=seobot tsconfig*.json ./
 
 RUN npm ci --include=dev --audit=false --ignore-scripts
 
 COPY --chown=seobot src/ ./src/
 COPY --chown=seobot config/ ./config/
 COPY --chown=seobot scripts/ ./scripts/
+COPY --chown=seobot ai/ ./ai/
+COPY --chown=seobot jest.config.js ./
+COPY --chown=seobot eslint.config.js ./
+COPY --chown=seobot .prettierrc.js ./
+COPY --chown=seobot .prettierignore ./
 
 RUN npm run build
 
@@ -29,7 +34,7 @@ RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
 WORKDIR /home/seobot
 
 COPY --chown=seobot package*.json ./
-COPY --chown=seobot tsconfig.json ./
+COPY --chown=seobot tsconfig*.json ./
 RUN npm ci --include=dev --audit=false --ignore-scripts
 
 COPY --chown=seobot src/ ./src/

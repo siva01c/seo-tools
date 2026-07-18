@@ -19,6 +19,13 @@ services:
       - ./config:/home/seobot/config
       - ./scripts:/home/seobot/scripts
       - ./src:/home/seobot/src
+      - ./ai:/home/seobot/ai
+      - ./jest.config.js:/home/seobot/jest.config.js
+      - ./eslint.config.js:/home/seobot/eslint.config.js
+      - ./.prettierrc.js:/home/seobot/.prettierrc.js
+      - ./.prettierignore:/home/seobot/.prettierignore
+      - ./tsconfig.json:/home/seobot/tsconfig.json
+      - ./tsconfig.test.json:/home/seobot/tsconfig.test.json
     command: ['sleep', 'infinity']
 
   typecheck:

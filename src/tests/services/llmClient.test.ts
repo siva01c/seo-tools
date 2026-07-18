@@ -4,9 +4,32 @@ import {
     resolveLlmConfig,
     parseLlmJsonResponse,
     generateTitleDescriptionFix,
+    stripPiiFromText,
 } from '../../services/llmClient.js';
 
 describe('llmClient', () => {
+    describe('stripPiiFromText', () => {
+        it('redacts email addresses from text', () => {
+            const text = 'Contact John Doe at john.doe@example.com for info.';
+            expect(stripPiiFromText(text)).toBe('Contact John Doe at [REDACTED_EMAIL] for info.');
+        });
+
+        it('redacts phone numbers from text', () => {
+            const text = 'Call support at +420 123 456 789 or 555-1234.';
+            expect(stripPiiFromText(text)).toBe(
+                'Call support at [REDACTED_PHONE] or [REDACTED_PHONE].'
+            );
+        });
+
+        it('leaves text without PII unchanged', () => {
+            const text = 'Clean article title and description content without email or phone.';
+            expect(stripPiiFromText(text)).toBe(text);
+        });
+
+        it('handles empty or undefined text gracefully', () => {
+            expect(stripPiiFromText('')).toBe('');
+        });
+    });
     describe('resolveProvider', () => {
         it('resolves "ollama" explicitly', () => {
             expect(resolveProvider('ollama')).toBe('ollama');

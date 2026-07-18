@@ -168,10 +168,11 @@ requester, and retains it with no defined lifetime.
   date-folders older than the cutoff across all five storage types plus prunes stale entries from
   `storage/crawl_alerts.jsonl`. Supports `--domain <name>` to scope to one domain and `--dry-run` to
   preview without deleting.
-- **Not yet scheduled**: no cron/systemd timer or CI job runs this automatically yet — it must be
-  invoked manually or wired into the deployment (e.g. a daily cron entry calling
-  `npm run purge-old-data -- --days 90`) before this policy is actually self-enforcing in
-  production. Tracked as a follow-up.
+- **Automated Retention Scheduling**: `src/mcp-server.ts` includes an automated 24-hour background interval (`setInterval`) triggering `purge-old-data.ts --days 90` to ensure self-enforcing retention in production.
+- **DSAR & Right-to-be-Forgotten Erasure Procedure**: Immediate data erasure for a specific domain upon receiving a Data Subject Access Request (DSAR) or removal demand is performed using:
+  `npx tsx scripts/purge-old-data.ts --days 0 --domain example.com`
+  This purges all stored datasets, reports, key-value stores, request queues, and logs for `example.com` regardless of age.
+- **Privacy Disclosures API**: `GET /api/privacy` provides real-time information regarding data controller details (`ludek.kvapil@macron.cz`), retention periods, purpose of processing, and third-party processors.
 
 **Public `/api/crawl` email submissions**: the email address supplied to the public crawl endpoint
 is held in-memory only (`job.email`/`job.emails` in `src/mcp-server.ts`'s `jobs` Map) and evicted

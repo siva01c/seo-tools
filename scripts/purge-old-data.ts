@@ -38,7 +38,7 @@ const domainFilter = getArg('domain');
 const daysArg = getArg('days');
 const days = daysArg ? parseInt(daysArg, 10) : NaN;
 
-if (!Number.isFinite(days) || days <= 0) {
+if (!Number.isFinite(days) || days < 0) {
     console.error(
         'Usage: npx tsx scripts/purge-old-data.ts --days <N> [--domain example.com] [--dry-run]'
     );
