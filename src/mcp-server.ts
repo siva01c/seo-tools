@@ -5,11 +5,10 @@
  */
 import * as http from 'http';
 import * as fs from 'fs';
-import * as net from 'net';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
-import { lookup } from 'dns/promises';
+import { checkUrlIsSafeToRequest } from './services/ssrfGuard.js';
 
 const PORT = parseInt(process.env.MCP_PORT ?? '3001', 10);
 const SEO_MCP_TOKEN = process.env.SEO_MCP_TOKEN ?? '';
@@ -40,6 +39,11 @@ const CRAWL_WALL_CLOCK_TIMEOUT_MS = parseInt(
     process.env.SEO_CRAWL_TIMEOUT_MS ?? String(15 * 60 * 1000),
     10
 );
+// Request body caps (ASVS 2.4.1) — generous for the small JSON payloads these endpoints
+// expect ({url,email} / JSON-RPC tool calls), but bound how much an unauthenticated caller
+// can force the server to buffer in memory per request.
+const MAX_CRAWL_BODY_BYTES = 16 * 1024;
+const MAX_MCP_BODY_BYTES = 64 * 1024;
 
 interface ICrawlJob {
     status: string;
@@ -123,10 +127,21 @@ function isEmailRateLimited(email: string): boolean {
     );
 }
 
+// Rate-limit key extraction. This deployment sits behind exactly one trusted reverse proxy
+// (ops-proxy/nginx-proxy on the agentic-ops network — see docker-compose.yml, which now binds
+// the container's host port to 127.0.0.1 so the proxy is the only way in). nginx sets
+// X-Forwarded-For via $proxy_add_x_forwarded_for, which APPENDS the address it actually saw to
+// any value the client already sent — so the trustworthy hop is the LAST entry, not the first.
+// Trusting the first (client-suppliable) entry, as this used to do, let any caller spoof a new
+// value per request and bypass every per-IP rate limit below (ASVS 4.1.3).
 function clientIp(req: http.IncomingMessage): string {
     const forwarded = req.headers['x-forwarded-for'];
     if (typeof forwarded === 'string' && forwarded.length > 0) {
-        return forwarded.split(',')[0].trim();
+        const hops = forwarded
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+        if (hops.length > 0) return hops[hops.length - 1];
     }
     return req.socket.remoteAddress ?? 'unknown';
 }
@@ -148,60 +163,25 @@ setInterval(
 ).unref();
 
 // ── Crawl target validation (blocklist + private-range SSRF check) ───────────
+//
+// The private-IP/DNS check itself lives in services/ssrfGuard.ts and is re-run again,
+// immediately before every page navigation, by preNavigationHooks in main.ts — this
+// submission-time call alone is a TOCTOU-vulnerable single point-in-time check (the crawler
+// runs as a separate child process that resolves DNS fresh, seconds to minutes later), so it
+// must not be treated as the only gate. See ssrfGuard.ts's module comment for the full rationale.
 
 const DENIED_HOSTS = new Set(['localhost', 'seo.ludekkvapil.cz', 'seo.mcpserver.cz', 'seo.local']);
 
-function isPrivateIp(ip: string): boolean {
-    if (net.isIPv4(ip)) {
-        const [a, b] = ip.split('.').map(Number);
-        return (
-            a === 0 ||
-            a === 10 ||
-            a === 127 ||
-            (a === 100 && b >= 64 && b <= 127) ||
-            (a === 169 && b === 254) ||
-            (a === 172 && b >= 16 && b <= 31) ||
-            (a === 192 && b === 168) ||
-            (a === 198 && (b === 18 || b === 19)) ||
-            a >= 224
-        );
-    }
-    const lower = ip.toLowerCase();
-    if (lower === '::' || lower === '::1') return true;
-    if (lower.startsWith('::ffff:')) {
-        const mapped = lower.slice('::ffff:'.length);
-        return net.isIPv4(mapped) ? isPrivateIp(mapped) : true;
-    }
-    // fc00::/7 (ULA) and fe80::/10 (link-local)
-    return /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower);
-}
-
 /** Returns an error message if the URL must not be crawled, or null if it is allowed. */
-async function validateCrawlTarget(rawUrl: string): Promise<string | null> {
-    let parsed: URL;
+function validateCrawlTarget(rawUrl: string): Promise<string | null> {
+    let host: string;
     try {
-        parsed = new URL(rawUrl);
+        host = new URL(rawUrl).hostname.replace(/^\[|\]$/g, '');
     } catch {
-        return 'Invalid URL format';
+        return Promise.resolve('Invalid URL format');
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return 'Only http(s) URLs are allowed';
-    }
-    const host = parsed.hostname.replace(/^\[|\]$/g, '');
-    if (DENIED_HOSTS.has(host)) return 'Crawling this domain is not permitted';
-    if (net.isIP(host)) {
-        return isPrivateIp(host) ? 'Crawling private addresses is not permitted' : null;
-    }
-    let addresses: Array<{ address: string }>;
-    try {
-        addresses = await lookup(host, { all: true, verbatim: true });
-    } catch {
-        return `Cannot resolve hostname: ${host}`;
-    }
-    if (addresses.length === 0 || addresses.some(a => isPrivateIp(a.address))) {
-        return 'Crawling private addresses is not permitted';
-    }
-    return null;
+    if (DENIED_HOSTS.has(host)) return Promise.resolve('Crawling this domain is not permitted');
+    return checkUrlIsSafeToRequest(rawUrl);
 }
 
 // ── Crawler process runner (compiled dist in production, tsx in dev) ─────────
@@ -766,20 +746,49 @@ export function dispatch(method: string, params: Record<string, unknown>, id: un
     return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
 }
 
-function readJsonBody(req: http.IncomingMessage): Promise<any> {
+class BodyTooLargeError extends Error {
+    constructor() {
+        super('Request body too large');
+    }
+}
+
+// Buffers the request body, rejecting once `maxBytes` is exceeded so an unauthenticated caller
+// can't force unbounded memory growth by streaming a huge body (ASVS 2.4.1). Deliberately does
+// NOT call req.destroy() on overflow: the request and response share one socket, and destroying
+// it would prevent the caller from writing back a clean 413 — the client would just see a
+// connection reset instead of an actual error response. Excess chunks are simply discarded
+// (not appended) while the stream drains to completion in the background.
+function readRawBody(req: http.IncomingMessage, maxBytes: number): Promise<string> {
     return new Promise((resolve, reject) => {
         let body = '';
-        req.on('data', chunk => {
+        let bytes = 0;
+        let settled = false;
+        req.on('data', (chunk: Buffer) => {
+            bytes += chunk.length;
+            if (bytes > maxBytes) {
+                if (!settled) {
+                    settled = true;
+                    reject(new BodyTooLargeError());
+                }
+                return; // keep draining, just stop accumulating
+            }
             body += chunk;
         });
         req.on('end', () => {
-            try {
-                resolve(JSON.parse(body || '{}'));
-            } catch (err) {
+            if (!settled) resolve(body);
+        });
+        req.on('error', err => {
+            if (!settled) {
+                settled = true;
                 reject(err);
             }
         });
     });
+}
+
+async function readJsonBody(req: http.IncomingMessage, maxBytes: number): Promise<any> {
+    const body = await readRawBody(req, maxBytes);
+    return JSON.parse(body || '{}');
 }
 
 async function sendSeoEmail(
@@ -860,9 +869,10 @@ function corsHeaders(req: http.IncomingMessage): Record<string, string> {
 // Baseline security headers applied to every response: no MIME sniffing, no third-party
 // framing, no referrer leakage. CSP is intentionally loose (no default-src 'self') because
 // FRONTEND_DIR is mounted from an external, unaudited build (see docs/todo.md open question
-// on frontend location) — object-src/frame-ancestors are the safe-everywhere subset.
+// on frontend location) — object-src/base-uri/frame-ancestors are the safe-everywhere subset
+// ASVS 3.4.3 requires as the minimum global policy regardless of that tradeoff.
 const SECURITY_HEADERS: Record<string, string> = {
-    'Content-Security-Policy': "object-src 'none'; frame-ancestors 'none'",
+    'Content-Security-Policy': "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
@@ -897,12 +907,15 @@ const server = http.createServer(async (req, res) => {
 
     // 2. Public Static Web Server (No auth)
     if (req.method === 'GET' && !urlPath.startsWith('/api/')) {
-        const isEn = urlPath.startsWith('/en/') || urlPath === '/en';
-        const subDir = isEn ? 'seo_en' : 'seo_cs';
+        // FRONTEND_DIR is mounted at the Hugo `config_seo.toml` publishDir root. That build has
+        // defaultContentLanguage="en" with defaultContentLanguageInSubdir=false, so English is
+        // published at the root and Czech under /cs/ — mirror that split here.
+        const isCs = urlPath.startsWith('/cs/') || urlPath === '/cs';
+        const subDir = isCs ? 'cs' : '.';
         let cleanUrl = urlPath;
-        if (isEn) {
+        if (isCs) {
             cleanUrl =
-                urlPath === '/en' || urlPath === '/en/' ? '/index.html' : urlPath.substring(3);
+                urlPath === '/cs' || urlPath === '/cs/' ? '/index.html' : urlPath.substring(3);
         } else if (urlPath === '/') {
             cleanUrl = '/index.html';
         }
@@ -945,7 +958,7 @@ const server = http.createServer(async (req, res) => {
                 });
             }
 
-            const body = await readJsonBody(req);
+            const body = await readJsonBody(req, MAX_CRAWL_BODY_BYTES);
             const urlInput = String(body.url ?? '').trim();
             const emailInput = String(body.email ?? '').trim();
 
@@ -1162,6 +1175,9 @@ const server = http.createServer(async (req, res) => {
 
             return send(200, { success: true, job_id: jobId, domain });
         } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+                return send(413, { error: err.message });
+            }
             return send(400, { error: 'Failed to process request: ' + String(err) });
         }
     }
@@ -1227,34 +1243,45 @@ const server = http.createServer(async (req, res) => {
             return send(401, { error: 'Unauthorized' });
         }
 
-        let body = '';
-        req.on('data', chunk => {
-            body += chunk;
-        });
-        req.on('end', () => {
-            let rpc: {
-                jsonrpc: string;
-                id: unknown;
-                method: string;
-                params?: Record<string, unknown>;
-            };
-            try {
-                rpc = JSON.parse(body);
-            } catch {
-                return send(400, {
+        let body: string;
+        try {
+            body = await readRawBody(req, MAX_MCP_BODY_BYTES);
+        } catch (err) {
+            if (err instanceof BodyTooLargeError) {
+                return send(413, {
                     jsonrpc: '2.0',
                     id: null,
-                    error: { code: -32700, message: 'Parse error' },
+                    error: { code: -32600, message: err.message },
                 });
             }
-            const result = dispatch(rpc.method, rpc.params ?? {}, rpc.id);
-            if (result === null) {
-                res.writeHead(204);
-                return res.end();
-            }
-            return send(200, result);
-        });
-        return;
+            return send(400, {
+                jsonrpc: '2.0',
+                id: null,
+                error: { code: -32700, message: 'Failed to read request body' },
+            });
+        }
+
+        let rpc: {
+            jsonrpc: string;
+            id: unknown;
+            method: string;
+            params?: Record<string, unknown>;
+        };
+        try {
+            rpc = JSON.parse(body);
+        } catch {
+            return send(400, {
+                jsonrpc: '2.0',
+                id: null,
+                error: { code: -32700, message: 'Parse error' },
+            });
+        }
+        const result = dispatch(rpc.method, rpc.params ?? {}, rpc.id);
+        if (result === null) {
+            res.writeHead(204);
+            return res.end();
+        }
+        return send(200, result);
     }
 
     // Default 404
@@ -1266,6 +1293,20 @@ if (IS_PRODUCTION && !SEO_MCP_TOKEN) {
         '[mcp-server] FATAL: SEO_MCP_TOKEN must be set when NODE_ENV=production. Refusing to start.'
     );
     process.exit(1);
+}
+
+// /mcp/post has no rate limiting on auth attempts (unlike the /api/crawl endpoints), so brute-
+// force resistance rests entirely on token entropy — enforce a floor (32 chars is 128 bits for
+// a hex token; `openssl rand -hex 24` as documented in .env.example gives 48).
+if (SEO_MCP_TOKEN && SEO_MCP_TOKEN.length < 32) {
+    const msg =
+        '[mcp-server] SEO_MCP_TOKEN is shorter than 32 characters — too weak to resist brute ' +
+        'forcing against the unthrottled /mcp/post endpoint. Generate one with `openssl rand -hex 24`.';
+    if (IS_PRODUCTION) {
+        console.error(`FATAL: ${msg} Refusing to start.`);
+        process.exit(1);
+    }
+    console.warn(msg);
 }
 
 // Don't bind a socket when imported by the test suite

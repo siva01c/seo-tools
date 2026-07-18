@@ -14,8 +14,9 @@ a policy requirement for the AI persona, but nothing in `src/mcp-server.ts` enfo
 **Decision:** for now, accept this risk rather than build a verification system, because:
 
 - The endpoint already rejects SSRF targets (private/loopback/link-local IPs, non-http(s) schemes)
-  via `validateCrawlTarget()` — so the risk is "crawl a public site you don't own," not "reach an
-  internal service."
+  via `validateCrawlTarget()`, re-verified again immediately before every page navigation (see
+  "SSRF: TOCTOU via DNS rebinding" below) — so the risk is "crawl a public site you don't own," not
+  "reach an internal service."
 - It's a pre-revenue, low-traffic side project; building verification now is premature relative to
   other gaps.
 - The abuse case (someone crawling an arbitrary public site) is bounded by the mitigations below,
@@ -50,6 +51,37 @@ a policy requirement for the AI persona, but nothing in `src/mcp-server.ts` enfo
   token/no-token check used here.
 - A specific abuse incident occurs (e.g. someone crawling a competitor or a site they don't own for
   scraping purposes) that the current mitigations don't address.
+
+## SSRF: TOCTOU via DNS rebinding (closed)
+
+**Status:** Closed, as of 2026-07-17. Found during an ASVS 5.0 review (1.3.6) of `src/mcp-server.ts`.
+
+`validateCrawlTarget()` resolved DNS and checked for private IPs exactly once, when a crawl was
+submitted. `POST /api/crawl` then spawns `src/main.ts` as a separate child process, which uses
+Crawlee/Playwright to do its own, independent DNS resolution for every page it visits — seconds to
+minutes after the one-time check, and again for every page over up to a 15-minute crawl
+(`SEO_CRAWL_TIMEOUT_MS`). Neither `main.ts` nor any `src/services/*` module re-validated the target
+before actually connecting.
+
+This is a classic TOCTOU SSRF gap via DNS rebinding: an attacker submits a domain they control,
+lets it resolve to a public IP long enough to pass `validateCrawlTarget()`, then re-points the
+record (short TTL) at a private address before Playwright's actual request goes out. Because the
+crawler child process runs in the same container as `mcp-server.ts` on the `agentic-ops` Docker
+network, a successful rebind could reach this monorepo's other internal services (MongoDB, the
+mail API, etc.), not just an arbitrary public site — a materially worse outcome than the
+domain-ownership risk accepted above.
+
+**Fix:** extracted the IP-check logic to `src/services/ssrfGuard.ts` (`checkUrlIsSafeToRequest`),
+shared by `mcp-server.ts`'s submission-time check and a new `preNavigationHooks` entry
+(`ssrfPreNavigationHook`) added to all three `PlaywrightCrawler` instances in `main.ts`. The hook
+re-runs the same check immediately before every `page.goto()`, shrinking the TOCTOU window from
+minutes to milliseconds — the standard mitigation for this class of bug (does not need Chromium's
+own connection to be IP-pinned, which Playwright doesn't expose a hook for).
+
+**Not fully eliminated**: the residual window between the hook's `dns.lookup()` and Chromium's own
+subsequent resolution inside `page.goto()` is not zero — full elimination would require pinning the
+resolved IP for Chromium's actual connection (e.g. via a proxy), which Crawlee/Playwright doesn't
+support out of the box. Revisit if this becomes a real target for abuse.
 
 ## Related environment variables
 

@@ -1,4 +1,4 @@
-FROM apify/actor-node-playwright-chrome:20 AS builder
+FROM apify/actor-node-playwright-chrome:20-1.60.0 AS builder
 
 USER root
 RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
@@ -19,7 +19,7 @@ COPY --chown=seobot scripts/ ./scripts/
 RUN npm run build
 
 # ─── test stage ──────────────────────────────────────────────────────────────
-FROM apify/actor-node-playwright-chrome:20 AS test
+FROM apify/actor-node-playwright-chrome:20-1.60.0 AS test
 
 USER root
 RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
@@ -46,7 +46,7 @@ USER seobot
 CMD ["npm", "test"]
 
 # ─── production stage ─────────────────────────────────────────────────────────
-FROM apify/actor-node-playwright-chrome:20 AS production
+FROM apify/actor-node-playwright-chrome:20-1.60.0 AS production
 
 USER root
 RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \

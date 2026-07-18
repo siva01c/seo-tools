@@ -9,6 +9,7 @@ import {
     fetchHtmlSitemapUrls,
 } from './services/sitemapService.js';
 import { fetchRobotsRules, isAllowedByRobots, IRobotsRules } from './services/robotsService.js';
+import { checkUrlIsSafeToRequest } from './services/ssrfGuard.js';
 import { sitemapComparisonService, ISitemapUrl } from './services/sitemapComparison.js';
 import { RateLimitingService, rateLimitPresets } from './services/rateLimitingService.js';
 import { storageService } from './services/storageService.js';
@@ -1290,6 +1291,22 @@ const requestHandler = async ({
     }
 };
 
+// Re-checks the target isn't a private/internal address immediately before navigation. This
+// crawler is spawned by mcp-server.ts's own one-time DNS/IP check at submission time, but that
+// check happens seconds to minutes before Playwright actually connects and re-resolves DNS
+// itself — an attacker controlling DNS for the submitted domain could rebind it to a private
+// address in that window (ASVS 1.3.6). Running the same check again right here, in a
+// preNavigationHook, shrinks that gap to milliseconds. See ssrfGuard.ts for the rationale.
+const ssrfPreNavigationHook = async (crawlingContext: {
+    request: { url: string };
+}): Promise<void> => {
+    const targetUrl = crawlingContext.request.url;
+    const rejection = await checkUrlIsSafeToRequest(targetUrl);
+    if (rejection) {
+        throw new Error(`Refusing to navigate to ${targetUrl} (${rejection})`);
+    }
+};
+
 // Use the failedRequestHandler to handle failed requests.
 const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
     const currentUrl = request.loadedUrl ?? request.url;
@@ -1351,6 +1368,7 @@ const crawler = new PlaywrightCrawler({
 
     // Enhanced fingerprinting and headers
     preNavigationHooks: [
+        ssrfPreNavigationHook,
         async (crawlingContext, _gotoOptions): Promise<void> => {
             const { page } = crawlingContext;
 
@@ -1669,6 +1687,7 @@ try {
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
+                ssrfPreNavigationHook,
                 async (crawlingContext, _gotoOptions): Promise<void> => {
                     const { page } = crawlingContext;
                     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -1810,6 +1829,7 @@ try {
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
+                ssrfPreNavigationHook,
                 async (crawlingContext, _gotoOptions): Promise<void> => {
                     const { page } = crawlingContext;
                     await page.setViewportSize({ width: 1920, height: 1080 });

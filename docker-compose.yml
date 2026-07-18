@@ -58,17 +58,23 @@ services:
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
       MCP_PORT: '3000'
       FRONTEND_DIR: '/home/seobot/frontend/public'
-      VIRTUAL_HOST: 'seo.mcpserver.cz,seo.local'
-      LETSENCRYPT_HOST: 'seo.mcpserver.cz'
+      VIRTUAL_HOST: 'seo.ludekkvapil.cz,seo.local'
+      LETSENCRYPT_HOST: 'seo.ludekkvapil.cz'
       VIRTUAL_PORT: '3000'
       VIRTUAL_PROTO: 'http'
       VIRTUAL_NETWORK: 'agentic-ops'
       HTTPS_METHOD: 'noredirect'
     volumes:
       - ./storage:/home/seobot/storage
-      - ../ludekkvapil/public:/home/seobot/frontend/public:ro
+      # config_seo.toml publishes here (publishDir = "public/seo"); mount just the SEO
+      # subsite, not the whole portfolio public/ tree, so unrelated pages aren't served.
+      - ../ludekkvapil/public/seo:/home/seobot/frontend/public:ro
     ports:
-      - '3001:3000'
+      # Bound to localhost only: public traffic must go through ops-proxy on the agentic-ops
+      # network, which is the only party allowed to set X-Forwarded-For (see clientIp() in
+      # mcp-server.ts). Publishing this on 0.0.0.0 would let anyone bypass the proxy and forge
+      # that header directly, defeating all per-IP rate limiting (ASVS 4.1.3).
+      - '127.0.0.1:3001:3000'
     # xvfb provides a display for crawls that retry with a visible browser
     command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped

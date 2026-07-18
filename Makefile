@@ -18,10 +18,10 @@ crawl:
 	$(COMPOSE) run --rm app npm run crawl -- $(ARGS)
 
 test:
-	$(COMPOSE) run --profile tools --rm test
+	$(COMPOSE) --profile tools run --rm test
 
 typecheck:
-	$(COMPOSE) run --profile tools --rm typecheck
+	$(COMPOSE) --profile tools run --rm typecheck
 
 lint:
 	$(COMPOSE) run --rm app npm run lint
