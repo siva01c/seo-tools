@@ -1,52 +1,17 @@
-# Metadata Crawler (SEO & GenAI Crawler)
+# On-Page SEO Analyzer
 
-A comprehensive web crawler built for advanced SEO analysis, AI-powered content indexing, and
-website visibility optimization. This powerful tool extracts extensive metadata including
-Google-supported SEO tags, structured data, and AI indexing metadata perfect for content
-optimization and search engine analysis.
+An on-page SEO analyzer that crawls a site and turns the result into actionable audits: SEO
+issue reports (titles, meta descriptions, canonicals, structured data, broken links), a
+comprehensive Markdown audit, optional LLM-powered title/meta-description fix suggestions, and an
+MCP server that exposes it all to AI agents. The Crawlee + Playwright crawler underneath extracts
+Google-supported SEO tags, structured data (JSON-LD/microdata), and AI-indexing metadata; the
+reporting layer is where the value is.
+
+The typical workflow is **crawl once → run reports** — see [Reports & Analysis](#-reports--analysis).
 
 **Docker Compose is the recommended runtime** (reproducible, no host setup) — run crawler commands
 inside the `app` service. Local development without Docker also works: `npm install` then use the
 `npm run` scripts directly (Node.js >= 20 + `npx playwright install chromium`).
-
-## 🔧 Recent Updates
-
-### ✅ Advanced Rate Limiting (NEW!)
-
-- **Configurable Time Windows**: Support for 1-5 hour rate limiting windows
-- **Multiple Concurrent Rules**: Apply multiple rate limits simultaneously
-- **Sliding Window Algorithm**: Accurate rate limiting with sliding time windows
-- **Persistent Request History**: Request tracking persists across crawler sessions
-- **Smart Request Distribution**: Automatic delay calculation for even distribution
-- **Built-in Presets**: Conservative, moderate, aggressive, bulk, and tiered options
-- **Command Line Support**: Easy rate limiting with `--rate-limit` argument
-
-### ✅ Smart Incremental Crawling
-
-- **Sitemap Comparison**: Automatically compare current sitemap with previous crawls
-- **Intelligent URL Filtering**: Only crawl new or modified content since last crawl
-- **Multiple Detection Methods**: lastmod dates, failed URLs, age-based thresholds
-- **Flexible Modes**: incremental, new-only, modified-only, or full crawl
-- **Massive Time Savings**: Reduce crawl scope by 70-90% for established sites
-
-### ✅ Enhanced URL Filtering
-
-- **Path-Based Exclusions**: Exclude specific URL paths like `/user/login`, `/admin`
-- **Smart User-Agent Rotation**: Automatically rotate user-agents on 403 errors
-- **Advanced Domain Logic**: Improved allowedDomains support with proper subdomain handling
-- **Debug Mode**: Enhanced logging for troubleshooting domain/path filtering
-
-### ✅ Enhanced Configuration Management
-
-- **YAML-Based Launch Arguments**: Browser launch arguments moved from code to configuration
-- **Separate Browser Profiles**: Different settings for headless vs visible browser modes
-- **Maintainable Architecture**: No more hardcoded browser arguments in source code
-
-### ✅ Improved Command Line Interface
-
-- **Flexible URL Input**: Support for multiple URL argument formats
-- **Browser Mode Control**: Easy switching between headless and visible modes
-- **Direct Execution**: Alternative to npm scripts for simplified usage
 
 ## 🚀 Features
 
@@ -103,9 +68,9 @@ Exclude specific subdomains or domains from crawling:
 ```yaml
 targets:
   excludedDomains:
-    - 'api.example.com' # Exclude API subdomain
-    - 'cdn.example.com' # Exclude CDN subdomain
-    - 'static.example.com' # Exclude static assets
+    - "api.example.com" # Exclude API subdomain
+    - "cdn.example.com" # Exclude CDN subdomain
+    - "static.example.com" # Exclude static assets
 ```
 
 #### Command Line Method
@@ -130,10 +95,10 @@ Exclude specific URL paths from crawling:
 ```yaml
 targets:
   excludedPaths:
-    - '/user/login' # Exclude login pages
-    - '/admin' # Exclude admin section
-    - '/api/' # Exclude API endpoints
-    - '/private' # Exclude private pages
+    - "/user/login" # Exclude login pages
+    - "/admin" # Exclude admin section
+    - "/api/" # Exclude API endpoints
+    - "/private" # Exclude private pages
 ```
 
 #### Command Line Method
@@ -177,8 +142,8 @@ docker compose run --rm app npm run crawl -- https://example.com --incremental
 crawler:
   incrementalMode: true
   incrementalConfig:
-    previousCrawlDate: '12-07-2025' # DD-MM-YYYY format
-    mode: 'incremental' # incremental | new-only | modified-only | all
+    previousCrawlDate: "12-07-2025" # DD-MM-YYYY format
+    mode: "incremental" # incremental | new-only | modified-only | all
     autoDetectPreviousCrawl: true
     maxAgeThresholdDays: 30 # Consider URLs older than 30 days as modified
 ```
@@ -270,12 +235,12 @@ crawler:
       - windowHours: 1 # 1 hour window
         maxRequests: 100 # Max 100 requests per hour
         enabled: true
-        description: 'Hourly limit'
+        description: "Hourly limit"
 
       - windowHours: 3 # 3 hour window
         maxRequests: 250 # Max 250 requests per 3 hours
         enabled: true
-        description: '3-hour limit'
+        description: "3-hour limit"
 ```
 
 ### Built-in Presets
@@ -350,7 +315,7 @@ Enable/disable specific data extraction:
 
 ## 📊 Output Data
 
-The actor provides comprehensive data for each crawled page:
+The crawler provides comprehensive data for each crawled page:
 
 ```json
 {
@@ -437,13 +402,28 @@ docker compose run --rm app npm run seo-audit -- --domain example.com
 ### SEO Issues — `report-seo-issues.ts`
 
 Focused, machine-readable issue lists for bulk fixing. Flags **meta description** and **title**
-problems categorized as `missing` / `too_short` / `too_long` / `duplicate`, plus heading-structure
-and structured-data gaps.
+problems categorized as `missing` / `too_short` / `too_long` / `pixel_too_long` / `duplicate`, plus
+heading-structure and structured-data gaps. Length is checked both by **character count** and by
+**estimated pixel width** (titles ~579px, meta descriptions ~919px — closer to how Google actually
+truncates SERP snippets).
 
 ```bash
 docker compose run --rm app npm run report:seo-issues -- --domain example.com --csv
 # Options: --domain <d>, --output-dir <dir>, --csv
 # Output:  per-issue JSON (and CSV with --csv) in storage/reports/
+```
+
+### LLM Title/Meta Fix Suggestions — `generate-title-description-fixes.ts`
+
+For each page with a flagged title or meta description, generates a **rewritten suggestion** using
+an LLM, grounded in the page's own heading structure and content excerpt. Provider-agnostic via an
+OpenAI-compatible client — point it at OpenAI or a local model (Ollama) through env vars:
+`LLM_PROVIDER` (`openai` | `ollama`), `LLM_API_KEY`, `LLM_MODEL`, `LLM_BASE_URL`.
+
+```bash
+docker compose run --rm app npx tsx scripts/generate-title-description-fixes.ts --domain example.com --csv
+# Options: --domain <d> (required), --output-dir <dir>, --csv, --language <cs|en>
+# Output:  storage/reports/<domain>/title-description-fixes-<date>.json (+ .csv)
 ```
 
 ### 404 Link Report — `report-404s.ts`
@@ -684,9 +664,9 @@ docker compose run --rm app npm run crawl -- https://www.example.com --headless=
 ```yaml
 targets:
   excludedDomains:
-    - 'api.example.com'
-    - 'cdn.example.com'
-    - 'static.example.com'
+    - "api.example.com"
+    - "cdn.example.com"
+    - "static.example.com"
 
 crawler:
   maxRequestsPerCrawl: 0 # Page limit (0 = unlimited)
@@ -699,30 +679,30 @@ crawler:
   rateLimiting:
     enabled: false # Enable/disable rate limiting
     persistData: true # Save request history across sessions
-    preset: 'moderate' # Use built-in preset
+    preset: "moderate" # Use built-in preset
     # OR define custom rules:
     rules:
       - windowHours: 1
         maxRequests: 100
         enabled: true
-        description: 'Hourly limit'
+        description: "Hourly limit"
 
   # Browser launch arguments (configurable in YAML)
   launchArgs:
     headless: # Stealth mode arguments
-      - '--no-sandbox'
-      - '--disable-setuid-sandbox'
-      - '--disable-dev-shm-usage'
-      - '--disable-blink-features=AutomationControlled'
-      - '--disable-features=VizDisplayCompositor'
+      - "--no-sandbox"
+      - "--disable-setuid-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-blink-features=AutomationControlled"
+      - "--disable-features=VizDisplayCompositor"
 
     visible: # Visible browser arguments
-      - '--no-sandbox'
-      - '--disable-setuid-sandbox'
-      - '--disable-dev-shm-usage'
-      - '--disable-blink-features=AutomationControlled'
-      - '--no-first-run'
-      - '--no-default-browser-check'
+      - "--no-sandbox"
+      - "--disable-setuid-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--disable-blink-features=AutomationControlled"
+      - "--no-first-run"
+      - "--no-default-browser-check"
 
 output:
   storage:
@@ -817,22 +797,24 @@ The project includes an **MCP (Model Context Protocol)** server that enables LLM
 It also integrates the AI persona **Marek** — a senior SEO consultant.
 
 ### Key MCP Features:
+
 1.  **Tools:**
-    *   `crawl`: Trigger a crawl job asynchronously.
-    *   `get_report`: Retrieve report status or data for a domain.
-    *   `list_reports`: List all crawled domains and their audit dates.
+    - `crawl`: Trigger a crawl job asynchronously.
+    - `get_report`: Retrieve report status or data for a domain.
+    - `list_reports`: List all crawled domains and their audit dates.
 2.  **Prompts (Templates):**
-    *   `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`). Supports a `domain` argument which appends the latest crawl report as context.
+    - `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`). Supports a `domain` argument which appends the latest crawl report as context.
 3.  **Resources (Data Sources):**
-    *   `seo://reports/{domain}/latest`: Serves the latest generated Markdown audit report for the specified domain.
+    - `seo://reports/{domain}/latest`: Serves the latest generated Markdown audit report for the specified domain.
 
 ### Running the MCP Server
-*   **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container port `3000` on the `mcp` service).
-*   **Locally:**
-    ```bash
+
+- **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container port `3000` on the `mcp` service).
+- **Locally:**
+  `bash
     npm run mcp
-    ```
-Requires setting `SEO_MCP_TOKEN` in `.env` for Basic Authorization (if configured). For more details on the persona's role and rules, see [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
+    `
+  Requires setting `SEO_MCP_TOKEN` in `.env` for Basic Authorization (if configured). For more details on the persona's role and rules, see [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
 
 ## 📈 Performance Tips
 
@@ -844,12 +826,11 @@ Requires setting `SEO_MCP_TOKEN` in `.env` for Basic Authorization (if configure
 
 ## 🔗 Integration
 
-This actor integrates seamlessly with:
+The tool integrates well with:
 
+- **AI agents / LLM workflows** via the built-in MCP server (see above)
 - **Google Search Console** for SEO monitoring
-- **Google Cloud AI App Builder** for enhanced search
-- **Data analysis tools** via JSON export
-- **SEO platforms** through API access
+- **Data analysis tools** via JSON / JSONL / CSV export
 - **Content management systems** for metadata enrichment
 
 ## 📞 Support
@@ -857,11 +838,10 @@ This actor integrates seamlessly with:
 For issues or feature requests:
 
 1. Check the [Crawlee documentation](https://crawlee.dev/)
-2. Review the actor's configuration options
+2. Review the configuration options in `config/`
 3. Enable debug mode for detailed logging
-4. Contact support through Apify platform
 
 ---
 
 **Built with ❤️ for SEO professionals, content creators, and developers seeking comprehensive
-website analysis**
+on-page SEO analysis**
