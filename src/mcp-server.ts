@@ -918,7 +918,9 @@ const server = http.createServer(async (req, res) => {
         res.end(json);
     };
 
-    const urlPath = req.url ?? '';
+    // Strip the query string (e.g. cache-busting ?v=... on static assets) before
+    // any path matching/resolution below — none of the routes here expect one.
+    const urlPath = (req.url ?? '').split('?')[0];
 
     // 1. Health check & Privacy info (No auth)
     if (req.method === 'GET' && urlPath === '/health') {
