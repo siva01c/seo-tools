@@ -29,6 +29,35 @@ Disallow: /for-everyone
             expect(rules.disallow).toEqual(['/for-everyone']);
         });
 
+        it('ignores groups for other user-agents that follow the * group', () => {
+            const content = `
+User-agent: *
+Allow: /
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /
+`;
+            const rules = parseRobotsTxt(content);
+            expect(rules.disallow).toEqual([]);
+            expect(rules.allow).toEqual(['/']);
+        });
+
+        it('applies shared rules when several User-agent lines open one group', () => {
+            const content = `
+User-agent: Googlebot
+User-agent: *
+Disallow: /shared
+
+User-agent: Bingbot
+Disallow: /bing-only
+`;
+            const rules = parseRobotsTxt(content);
+            expect(rules.disallow).toEqual(['/shared']);
+        });
+
         it('matches a group naming our own user-agent token', () => {
             const content = `
 User-agent: SEO-Crawler

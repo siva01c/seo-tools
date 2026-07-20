@@ -59,6 +59,7 @@ export const parseRobotsTxt = (content: string, userAgentToken = 'SEO-Crawler'):
 
     let currentAgents: string[] = [];
     let groupApplies = false;
+    let groupSawDirectives = false;
 
     const targetToken = userAgentToken.toLowerCase();
 
@@ -73,9 +74,11 @@ export const parseRobotsTxt = (content: string, userAgentToken = 'SEO-Crawler'):
         const value = line.slice(separatorIndex + 1).trim();
 
         if (field === 'user-agent') {
-            // A new User-agent line after we've already seen directives starts a new group
-            if (currentAgents.length === 0 || groupApplies === undefined) {
+            // A User-agent line after directives starts a new group; consecutive
+            // User-agent lines (no directives between them) share one group.
+            if (currentAgents.length === 0 || groupSawDirectives) {
                 currentAgents = [value.toLowerCase()];
+                groupSawDirectives = false;
             } else {
                 currentAgents.push(value.toLowerCase());
             }
@@ -90,15 +93,16 @@ export const parseRobotsTxt = (content: string, userAgentToken = 'SEO-Crawler'):
             continue;
         }
 
+        // Any group directive (disallow, allow, crawl-delay, ...) closes the run
+        // of User-agent lines, even in groups that don't apply to us.
+        groupSawDirectives = true;
+
         if (!groupApplies) continue;
 
         if (field === 'disallow') {
             if (value) rules.disallow.push(value);
         } else if (field === 'allow') {
             if (value) rules.allow.push(value);
-        } else {
-            // New directive type (e.g. crawl-delay) ends implicit adjacency but doesn't
-            // affect group membership — ignored, not tracked for our purposes.
         }
     }
 
