@@ -48,7 +48,9 @@ export function dedupePagesByUrl<T extends CrawledPage>(pages: T[]): T[] {
  * must skip them. Records without a recorded content type are assumed HTML.
  */
 export function isHtmlPage(page: CrawledPage): boolean {
-    const contentType = String(page.response?.headers?.['content-type'] ?? '').toLowerCase();
+    const contentType = String(
+        page.response?.headers?.['content-type'] ?? page.response?.headers?.['Content-Type'] ?? ''
+    ).toLowerCase();
     if (!contentType) return true;
     return contentType.includes('text/html') || contentType.includes('application/xhtml');
 }
