@@ -820,6 +820,7 @@ async function sendSeoEmail(
         process.env.MAIL_API_URL ?? 'http://sales-assistant-assistant-1:8000/api/mail/send';
     const mailApiToken = process.env.MAIL_API_TOKEN ?? '';
     const smtpFrom = process.env.SMTP_FROM ?? 'seo@ludekkvapil.cz';
+    const bccEmail = process.env.SEO_BCC_EMAIL ?? 'seo@ludekkvapil.cz';
 
     if (!toEmail) {
         console.error('[mcp-server] Missing recipient.');
@@ -855,6 +856,7 @@ async function sendSeoEmail(
             subject: subject,
             body: body,
             from_email: smtpFrom,
+            bcc_emails: toEmail.trim().toLowerCase() === bccEmail.toLowerCase() ? [] : [bccEmail],
             attachments: [
                 {
                     content: base64Content,
