@@ -190,7 +190,7 @@ setInterval(
 // runs as a separate child process that resolves DNS fresh, seconds to minutes later), so it
 // must not be treated as the only gate. See ssrfGuard.ts's module comment for the full rationale.
 
-const DENIED_HOSTS = new Set(['localhost', 'seo.ludekkvapil.cz', 'seo.mcpserver.cz', 'seo.local']);
+const DENIED_HOSTS = new Set(['localhost', 'seo.mcpserver.cz', 'seo.local']);
 
 /** Returns an error message if the URL must not be crawled, or null if it is allowed. */
 function validateCrawlTarget(rawUrl: string): Promise<string | null> {
