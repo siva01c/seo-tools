@@ -5,6 +5,7 @@ import { join } from 'path';
 import { messages, resolveLang, langSuffix } from './i18n.js';
 import { dedupePagesByUrl } from './page-records.js';
 import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
+import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
 
 type Link = { href?: string; text?: string };
 type Page = {
@@ -96,6 +97,15 @@ const getLatestCrawlDate = (pages: Page[]): string | undefined => {
     if (dates.length === 0) return undefined;
     return dates.sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b))).at(-1);
 };
+
+// Ensure merged files exist for the domain(s) we need to process
+if (domainArg) {
+    console.log(`▶ Ensuring merged JSONL for ${domainArg}...`);
+    mergeSingleDomain(storageRoot, domainArg);
+} else {
+    console.log('▶ Ensuring per-domain merged JSONL files exist...');
+    mergeDomainsToIndividualJsonl(storageRoot);
+}
 
 const domainsToProcess = (() => {
     if (domainArg) return [domainArg];

@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
 import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
+import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
 import {
     findIncompleteOpenGraph,
     findMissingTwitterCard,
@@ -68,6 +69,15 @@ if (!existsSync(storageRoot)) {
 
 const toDomainFile = (domain: string): string =>
     join(storageRoot, domain, `${domain.replace(/\./g, '_')}.jsonl`);
+
+// Ensure merged files exist for the domain(s) we need to process
+if (domainArg) {
+    console.log(`▶ Ensuring merged JSONL for ${domainArg}...`);
+    mergeSingleDomain(storageRoot, domainArg);
+} else {
+    console.log('▶ Ensuring per-domain merged JSONL files exist...');
+    mergeDomainsToIndividualJsonl(storageRoot);
+}
 
 const domainsToProcess = (() => {
     if (domainArg) return [domainArg];

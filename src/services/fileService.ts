@@ -123,6 +123,72 @@ export const mergeDatasetToJsonl = (
     }
 };
 
+export const mergeSingleDomain = (
+    storagePath = './storage/datasets',
+    domain: string
+): { filesProcessed: number; totalRecords: number; outputPath: string } | undefined => {
+    try {
+        const domainPath = join(storagePath, domain);
+        if (!existsSync(domainPath)) {
+            console.error(`Domain directory not found: ${domainPath}`);
+            return;
+        }
+
+        const domainFilename = `${domain.replace(/\./g, '_')}.jsonl`;
+        const outputPath = join(domainPath, domainFilename);
+
+        const dateFolders = readdirSync(domainPath)
+            .filter(item => statSync(join(domainPath, item)).isDirectory())
+            .sort();
+
+        const mergedLines: string[] = [];
+        let filesProcessed = 0;
+        let totalRecords = 0;
+
+        for (const dateFolder of dateFolders) {
+            const sourceFile = join(domainPath, dateFolder, domainFilename);
+
+            if (!existsSync(sourceFile)) continue;
+
+            const content = readFileSync(sourceFile, 'utf8')
+                .split('\n')
+                .filter(line => line.trim());
+
+            if (content.length === 0) continue;
+
+            const annotated = content.map(line => {
+                try {
+                    const obj = JSON.parse(line);
+                    obj._metadata = {
+                        domain,
+                        crawlDate: dateFolder,
+                        sourceFile: sourceFile,
+                    };
+                    return JSON.stringify(obj);
+                } catch {
+                    return line;
+                }
+            });
+            mergedLines.push(...annotated);
+            filesProcessed++;
+            totalRecords += content.length;
+        }
+
+        if (mergedLines.length === 0) {
+            return undefined;
+        }
+
+        writeFileSync(outputPath, mergedLines.join('\n') + '\n');
+        return { filesProcessed, totalRecords, outputPath };
+    } catch (error) {
+        console.error(
+            `Error merging domain ${domain}:`,
+            error instanceof Error ? error.message : String(error)
+        );
+        return undefined;
+    }
+};
+
 export const mergeDomainsToIndividualJsonl = (
     storagePath = './storage/datasets'
 ):
