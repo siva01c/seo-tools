@@ -62,6 +62,7 @@ services:
       - .env
     environment:
       NODE_ENV: 'production'
+      NODE_OPTIONS: '--max-old-space-size=1024'
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
       MCP_PORT: '3000'
       FRONTEND_DIR: '/home/seobot/frontend/public'
@@ -85,6 +86,12 @@ services:
     # xvfb provides a display for crawls that retry with a visible browser
     command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2.5G
+        reservations:
+          memory: 1.5G
     networks:
       - agentic-ops
 

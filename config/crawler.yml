@@ -137,8 +137,8 @@ extraction:
     aiMetadata: true # Custom AI indexing metadata
     contentMetrics: true # Word count, reading time
     pageMap: true # PageMap data
-    htmlContent: true # Full HTML + main content HTML (opt-in: increases output size significantly)
-    images: true # Image metadata (src, alt, width, height, srcset, etc.)
+    htmlContent: false # Full HTML + main content HTML (opt-in: increases output size significantly) — DISABLED for memory optimization
+    images: false # Image metadata (src, alt, width, height, srcset, etc.) — DISABLED for memory optimization
 
   # Link extraction settings
   links:
