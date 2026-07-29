@@ -285,6 +285,16 @@ const TOOLS = [
                         'Disable robots.txt enforcement for this crawl. robots.txt is respected by default; only set this for authorized/internal crawls.',
                     default: false,
                 },
+                basic_auth_user: {
+                    type: 'string',
+                    description:
+                        'Username for HTTP Basic Auth. Must be paired with basic_auth_password. Credentials are sent only to the target domain, never to third parties.',
+                },
+                basic_auth_password: {
+                    type: 'string',
+                    description:
+                        'Password for HTTP Basic Auth. Must be paired with basic_auth_user. Credentials are sent only to the target domain, never to third parties.',
+                },
             },
             required: ['url'],
             additionalProperties: false,
@@ -350,11 +360,16 @@ function recordCrawlResult(domain: string, success: boolean) {
     }
 }
 
-function spawnCrawl(job: ICrawlJob, crawlArgs: string[], onClose: (success: boolean) => void) {
+function spawnCrawl(
+    job: ICrawlJob,
+    crawlArgs: string[],
+    onClose: (success: boolean) => void,
+    envOverrides?: Record<string, string>
+) {
     const runner = resolveRunner('crawl');
     const proc = spawn(runner.cmd, [...runner.args, ...crawlArgs], {
         cwd: process.cwd(),
-        env: { ...process.env },
+        env: { ...process.env, ...envOverrides },
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     let timedOut = false;
@@ -401,6 +416,13 @@ function handleCrawl(args: Record<string, unknown>): string {
     if (args.headless !== false) crawlArgs.push('--headless=true');
     if (args.ignore_robots) crawlArgs.push('--ignore-robots');
 
+    const envOverrides: Record<string, string> = {};
+    const basicAuthUser = String(args.basic_auth_user ?? '').trim();
+    const basicAuthPassword = String(args.basic_auth_password ?? '').trim();
+    if (basicAuthUser && basicAuthPassword) {
+        envOverrides.CRAWL_BASIC_AUTH = `${basicAuthUser}:${basicAuthPassword}`;
+    }
+
     const jobId = crypto.randomUUID();
     const job: ICrawlJob = {
         status: 'validating',
@@ -418,10 +440,15 @@ function handleCrawl(args: Record<string, unknown>): string {
             return;
         }
         job.status = 'running';
-        spawnCrawl(job, crawlArgs, success => {
-            finishJob(job, success ? 'done' : 'failed (crawl error)');
-            recordCrawlResult(domain, success);
-        });
+        spawnCrawl(
+            job,
+            crawlArgs,
+            success => {
+                finishJob(job, success ? 'done' : 'failed (crawl error)');
+                recordCrawlResult(domain, success);
+            },
+            envOverrides
+        );
     })();
 
     return JSON.stringify({

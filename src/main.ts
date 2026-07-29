@@ -180,6 +180,17 @@ const commandLineDateFolder =
         ? args[dateFolderIndex + 1]
         : (process.env.DATE_FOLDER ?? null);
 
+// Parse HTTP Basic Auth credentials from environment (format: user:pass)
+// Passed by the MCP server via CRAWL_BASIC_AUTH env var to avoid CLI argv exposure
+const rawBasicAuth = process.env.CRAWL_BASIC_AUTH ?? '';
+let basicAuthHeader: string | null = null;
+if (rawBasicAuth) {
+    const colonIndex = rawBasicAuth.indexOf(':');
+    if (colonIndex !== -1) {
+        basicAuthHeader = 'Basic ' + Buffer.from(rawBasicAuth).toString('base64');
+    }
+}
+
 // Check for START_URL environment variable (for Docker)
 const envTargetUrl = process.env.START_URL;
 
@@ -1370,14 +1381,14 @@ const crawler = new PlaywrightCrawler({
     preNavigationHooks: [
         ssrfPreNavigationHook,
         async (crawlingContext, _gotoOptions): Promise<void> => {
-            const { page } = crawlingContext;
+            const { page, request } = crawlingContext;
 
             // Set full browser width viewport first
             await page.setViewportSize({ width: 1920, height: 1080 });
 
             // Set user-agent from rotator and realistic headers
             const currentUserAgent = globalUserAgentRotator.getCurrentUserAgent();
-            await page.setExtraHTTPHeaders({
+            const headers: Record<string, string> = {
                 'User-Agent': currentUserAgent,
                 Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Language': 'en-US,en;q=0.9',
@@ -1389,7 +1400,39 @@ const crawler = new PlaywrightCrawler({
                 'Sec-Fetch-Site': 'none',
                 'Sec-Fetch-User': '?1',
                 'Cache-Control': 'max-age=0',
-            });
+            };
+
+            // Only inject Authorization header for requests to the target domain
+            if (basicAuthHeader) {
+                try {
+                    const normalizeHostname = (hostname: string): string =>
+                        hostname.replace(/^www\./, '');
+                    const requestHostname = new URL(request.url).hostname ?? '';
+                    const normalizedRequestHostname = normalizeHostname(requestHostname);
+                    const allowedDomains =
+                        config.targets.allowedDomains.length > 0
+                            ? config.targets.allowedDomains
+                            : [baseDomain];
+
+                    const isTargetDomain = allowedDomains.some(allowedDomain => {
+                        const normalizedAllowedDomain = normalizeHostname(allowedDomain);
+                        return (
+                            requestHostname === allowedDomain ||
+                            normalizedRequestHostname === normalizedAllowedDomain ||
+                            requestHostname.endsWith('.' + allowedDomain) ||
+                            allowedDomain.endsWith('.' + requestHostname)
+                        );
+                    });
+
+                    if (isTargetDomain) {
+                        headers.Authorization = basicAuthHeader;
+                    }
+                } catch {
+                    // If URL parsing fails, don't inject auth header
+                }
+            }
+
+            await page.setExtraHTTPHeaders(headers);
         },
     ],
 
