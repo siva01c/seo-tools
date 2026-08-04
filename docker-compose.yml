@@ -72,8 +72,19 @@ services:
       VIRTUAL_PROTO: 'http'
       VIRTUAL_NETWORK: 'agentic-ops'
       HTTPS_METHOD: 'noredirect'
+      # Crawlee sizes its autoscaling budget from host RAM (25% = 1 GB on this 4 GB box) and
+      # each crawl child process does so independently — it has no idea a sibling crawl is
+      # running. With SEO_MAX_CONCURRENT_CRAWLS=2 that means 2 GB of assumed budget against a
+      # 1.5 G container limit. Pin it so two crawls together stay under the limit and the
+      # autoscaler throttles concurrency before the cgroup OOM killer has to.
+      CRAWLEE_MEMORY_MBYTES: '512'
     volumes:
       - ./storage:/home/seobot/storage
+      # Mounted read-only so crawler.yml changes need only `docker compose restart mcp`, not a
+      # full image rebuild (npm ci + tsc is painful on a 4 GB VPS with no swap). configService
+      # reads process.cwd()/config/crawler.yml and nothing writes back into config/ — the
+      # rate limiter persists to ./storage/rate-limiting/ instead.
+      - ./config:/home/seobot/config:ro
       # config_seo.toml publishes here (publishDir = "public/seo"); mount just the SEO
       # subsite, not the whole portfolio public/ tree, so unrelated pages aren't served.
       - ../ludekkvapil/public/seo:/home/seobot/frontend/public:ro
@@ -86,12 +97,17 @@ services:
     # xvfb provides a display for crawls that retry with a visible browser
     command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped
+    # Sized against the host, not against what a crawl might want: the VPS is a 4 GB LXC with
+    # no swap and ~1.7 GB free, so a 2.5 G limit would never be reached — the host OOM killer
+    # fires first and picks the largest RSS on the box (a neighbouring MySQL), not the crawler.
+    # A measured crawl costs ~270-330 MB on top of a ~40 MB idle container, so 1.5 G leaves
+    # room for two concurrent crawls while still capping the blast radius.
     deploy:
       resources:
         limits:
-          memory: 2.5G
-        reservations:
           memory: 1.5G
+        reservations:
+          memory: 512M
     networks:
       - agentic-ops
 
