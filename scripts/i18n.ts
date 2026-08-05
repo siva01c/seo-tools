@@ -265,6 +265,28 @@ export interface ISeoAuditMessages {
     todoVerifyCanonical: string;
     todoVerifyCanonicalBody: string;
     roadmapFixBroken: (n: number) => string;
+
+    // Keyword position tracking
+    sKeywordTracking: string;
+    hKeywordSummary: string;
+    hGooglePositions: string;
+    hSeznamPositions: string;
+    hTopImprovements: string;
+    hTopDeclines: string;
+    hKeywordsByTag: string;
+    kwTotal: string;
+    kwAvgGoogle: string;
+    kwAvgSeznam: string;
+    kwTop10Google: string;
+    kwTop10Seznam: string;
+    kwNotRanked: string;
+    kwNoData: string;
+    kwSource: string;
+    kwChangeUp: string;
+    kwChangeDown: string;
+    kwNoPrior: string;
+    thKeywordPos: [string, string, string, string, string];
+    thCategory: [string, string, string, string];
 }
 
 export interface ISeoIssuesMessages {
@@ -541,6 +563,27 @@ const en: IMessages = {
         todoVerifyCanonicalBody:
             'Confirm all canonical URLs are included in sitemap.xml. Check for canonical loops and mismatches.',
         roadmapFixBroken: n => `Fix ${n} broken links (non-200 pages)`,
+
+        sKeywordTracking: 'Keyword Position Tracking',
+        hKeywordSummary: 'Summary',
+        hGooglePositions: 'Google Positions',
+        hSeznamPositions: 'Seznam Positions',
+        hTopImprovements: 'Biggest Improvements',
+        hTopDeclines: 'Biggest Declines',
+        hKeywordsByTag: 'Keywords by Category',
+        kwTotal: 'Total keywords tracked',
+        kwAvgGoogle: 'Average Google position',
+        kwAvgSeznam: 'Average Seznam position',
+        kwTop10Google: 'In Google top 10',
+        kwTop10Seznam: 'In Seznam top 10',
+        kwNotRanked: 'Not ranked (60+)',
+        kwNoData: 'No keyword position data available for this domain.',
+        kwSource: 'Data source: [SEMOR.cz](https://www.semor.cz/)',
+        kwChangeUp: '▲',
+        kwChangeDown: '▼',
+        kwNoPrior: '—',
+        thKeywordPos: ['Keyword', 'Pos.', 'Change', 'Vol.', 'URL'],
+        thCategory: ['Category', 'Keywords', 'Avg Google', 'Avg Seznam'],
     },
     seoIssues: {
         csvMetaDesc: ['url', 'title', 'issue', 'value', 'length', 'pixel_width', 'duplicate_urls'],
@@ -835,6 +878,27 @@ const cs: IMessages = {
         todoVerifyCanonicalBody:
             'Ověřte, že všechny kanonické URL jsou obsaženy v sitemap.xml. Zkontrolujte smyčky a nesoulady kanonických URL.',
         roadmapFixBroken: n => `Opravit ${n} nefunkčních odkazů (stránky bez stavu 200)`,
+
+        sKeywordTracking: 'Sledování pozic klíčových slov',
+        hKeywordSummary: 'Souhrn',
+        hGooglePositions: 'Pozice na Google',
+        hSeznamPositions: 'Pozice na Seznamu',
+        hTopImprovements: 'Největší zlepšení',
+        hTopDeclines: 'Největší propady',
+        hKeywordsByTag: 'Klíčová slova podle kategorie',
+        kwTotal: 'Celkem sledovaných klíčových slov',
+        kwAvgGoogle: 'Průměrná pozice na Google',
+        kwAvgSeznam: 'Průměrná pozice na Seznamu',
+        kwTop10Google: 'V top 10 na Google',
+        kwTop10Seznam: 'V top 10 na Seznamu',
+        kwNotRanked: 'Neumístěno (60+)',
+        kwNoData: 'Pro tuto doménu nejsou k dispozici data o pozicích klíčových slov.',
+        kwSource: 'Zdroj dat: [SEMOR.cz](https://www.semor.cz/)',
+        kwChangeUp: '▲',
+        kwChangeDown: '▼',
+        kwNoPrior: '—',
+        thKeywordPos: ['Klíčové slovo', 'Poz.', 'Změna', 'Hled.', 'URL'],
+        thCategory: ['Kategorie', 'Kl. slov', 'Prům. Google', 'Prům. Seznam'],
     },
     seoIssues: {
         csvMetaDesc: [

@@ -191,6 +191,15 @@ if (rawBasicAuth) {
     }
 }
 
+/**
+ * Strip any `user:password@` userinfo from a URL before it is logged.
+ *
+ * Crawler stdout is captured into the job log that `/api/crawl/status/:id` serves back, so a
+ * submitted URL carrying embedded credentials would otherwise be echoed to whoever holds the
+ * job id. Regex rather than `new URL()` so it also covers URLs too malformed to parse.
+ */
+const redactUrl = (url: string): string => url.replace(/(\/\/)[^/@\s]*@/, '$1<redacted>@');
+
 // Check for START_URL environment variable (for Docker)
 const envTargetUrl = process.env.START_URL;
 
@@ -1426,9 +1435,19 @@ const crawler = new PlaywrightCrawler({
 
                     if (isTargetDomain) {
                         headers.Authorization = basicAuthHeader;
+                        console.log(
+                            `🔐 Basic Auth header injected for ${redactUrl(request.url)} (hostname: ${requestHostname})`
+                        );
+                    } else {
+                        console.log(
+                            `⏭️  Basic Auth skipped for ${redactUrl(request.url)} (hostname: ${requestHostname}, allowed: [${allowedDomains.join(', ')}])`
+                        );
                     }
-                } catch {
+                } catch (err) {
                     // If URL parsing fails, don't inject auth header
+                    console.log(
+                        `⚠️ Error checking auth eligibility for ${redactUrl(request.url)}: ${err instanceof Error ? err.message : String(err)}`
+                    );
                 }
             }
 
