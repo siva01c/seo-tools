@@ -2,8 +2,9 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { messages, resolveLang, langSuffix } from './i18n.js';
+import { messages, resolveLang, langSuffix, ISeoAuditMessages } from './i18n.js';
 import { isHtmlPage } from './page-records.js';
+import { parseKeywordPositions, IKeywordPosition } from './parse-keyword-positions.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -330,12 +331,188 @@ function buildBrokenLinks(pages: IPageRecord[]): IBrokenLink[] {
     return broken.sort((a, b) => a.status - b.status);
 }
 
+function renderKeywordSection(keywords: IKeywordPosition[], m: ISeoAuditMessages): string {
+    if (keywords.length === 0) return '';
+
+    const posStr = (pos: number | null): string => (pos === null ? '60+' : String(pos));
+    const changeStr = (change: number | null): string => {
+        if (change === null) return m.kwNoPrior;
+        return change > 0 ? `+${change}` : String(change);
+    };
+    const changeIcon = (change: number | null): string => {
+        if (change === null) return '';
+        return change > 0 ? m.kwChangeUp : m.kwChangeDown;
+    };
+    const volStr = (vol: number): string => (vol <= 0 ? '—' : String(vol));
+    const shortUrl = (url: string): string => {
+        if (!url) return '—';
+        return url.replace(/^https?:\/\/[^/]+/, '') || '/';
+    };
+
+    const total = keywords.length;
+    const top10Google = keywords.filter(k => k.positionGoogle !== null && k.positionGoogle <= 10);
+    const top10Seznam = keywords.filter(k => k.positionSeznam !== null && k.positionSeznam <= 10);
+    const notRankedGoogle = keywords.filter(k => k.positionGoogle === null);
+    const notRankedSeznam = keywords.filter(k => k.positionSeznam === null);
+
+    const avgPos = (
+        list: IKeywordPosition[],
+        getPos: (k: IKeywordPosition) => number | null
+    ): string => {
+        const withPos = list.filter(k => getPos(k) !== null);
+        if (withPos.length === 0) return '—';
+        const sum = withPos.reduce((s, k) => s + (getPos(k) ?? 61), 0);
+        return (sum / withPos.length).toFixed(1);
+    };
+
+    const avgGoogle = avgPos(keywords, k => k.positionGoogle);
+    const avgSeznam = avgPos(keywords, k => k.positionSeznam);
+
+    const googleSorted = [...keywords].sort(
+        (a, b) => (a.positionGoogle ?? 61) - (b.positionGoogle ?? 61)
+    );
+    const seznamSorted = [...keywords].sort(
+        (a, b) => (a.positionSeznam ?? 61) - (b.positionSeznam ?? 61)
+    );
+
+    const improvements = (
+        list: IKeywordPosition[],
+        getChange: (k: IKeywordPosition) => number | null
+    ) =>
+        list
+            .filter(k => {
+                const chg = getChange(k);
+                return chg !== null && chg > 0;
+            })
+            .sort((a, b) => (getChange(b) ?? 0) - (getChange(a) ?? 0))
+            .slice(0, 5);
+
+    const declines = (
+        list: IKeywordPosition[],
+        getChange: (k: IKeywordPosition) => number | null
+    ) =>
+        list
+            .filter(k => {
+                const chg = getChange(k);
+                return chg !== null && chg < 0;
+            })
+            .sort((a, b) => (getChange(a) ?? 0) - (getChange(b) ?? 0))
+            .slice(0, 5);
+
+    const googleImprovements = improvements(googleSorted, k => k.changeGoogle);
+    const googleDeclines = declines(googleSorted, k => k.changeGoogle);
+    const seznamImprovements = improvements(seznamSorted, k => k.changeSeznam);
+    const seznamDeclines = declines(seznamSorted, k => k.changeSeznam);
+
+    // Category breakdown
+    const tagMap = new Map<string, IKeywordPosition[]>();
+    for (const k of keywords) {
+        const tag = k.tag || 'uncategorized';
+        const list = tagMap.get(tag) ?? [];
+        list.push(k);
+        tagMap.set(tag, list);
+    }
+
+    const [tkp] = [m.thKeywordPos];
+    const [tc] = [m.thCategory];
+
+    let section = `\n\n---\n\n## 14. ${m.sKeywordTracking}\n\n`;
+    section += `_${m.kwSource}_\n\n`;
+
+    // Summary
+    section += `### ${m.hKeywordSummary}\n\n`;
+    section += `| ${m.thSummary[0]} | ${m.thSummary[1]} |\n|--------|-------|\n`;
+    section += `| ${m.kwTotal} | ${total} |\n`;
+    section += `| ${m.kwAvgGoogle} | ${avgGoogle} |\n`;
+    section += `| ${m.kwAvgSeznam} | ${avgSeznam} |\n`;
+    section += `| ${m.kwTop10Google} | ${top10Google.length} |\n`;
+    section += `| ${m.kwTop10Seznam} | ${top10Seznam.length} |\n`;
+    section += `| ${m.kwNotRanked} (Google) | ${notRankedGoogle.length} |\n`;
+    section += `| ${m.kwNotRanked} (Seznam) | ${notRankedSeznam.length} |\n\n`;
+
+    // Google positions table
+    section += `### ${m.hGooglePositions}\n\n`;
+    section += `| ${tkp[0]} | ${tkp[1]} | ${tkp[2]} | ${tkp[3]} | ${tkp[4]} |\n`;
+    section += `|---------|------|--------|------|-----|\n`;
+    for (const k of googleSorted) {
+        const pos = posStr(k.positionGoogle);
+        const chg = changeStr(k.changeGoogle);
+        const icon = changeIcon(k.changeGoogle);
+        const chgDisplay = chg === m.kwNoPrior ? m.kwNoPrior : `${icon} ${chg}`;
+        section += `| ${k.keyword} | ${pos} | ${chgDisplay} | ${volStr(k.searchVolumeGoogle)} | \`${shortUrl(k.urlGoogle)}\` |\n`;
+    }
+
+    // Seznam positions table
+    section += `\n### ${m.hSeznamPositions}\n\n`;
+    section += `| ${tkp[0]} | ${tkp[1]} | ${tkp[2]} | ${tkp[3]} | ${tkp[4]} |\n`;
+    section += `|---------|------|--------|------|-----|\n`;
+    for (const k of seznamSorted) {
+        const pos = posStr(k.positionSeznam);
+        const chg = changeStr(k.changeSeznam);
+        const icon = changeIcon(k.changeSeznam);
+        const chgDisplay = chg === m.kwNoPrior ? m.kwNoPrior : `${icon} ${chg}`;
+        section += `| ${k.keyword} | ${pos} | ${chgDisplay} | ${volStr(k.searchVolumeSeznam)} | \`${shortUrl(k.urlSeznam)}\` |\n`;
+    }
+
+    // Improvements
+    const renderChangeList = (
+        items: IKeywordPosition[],
+        getChg: (k: IKeywordPosition) => number | null,
+        getPos: (k: IKeywordPosition) => number | null
+    ): string => {
+        if (items.length === 0) return '- _None_\n';
+        return items
+            .map(
+                k =>
+                    `- ${k.keyword}: ${changeIcon(getChg(k))} ${changeStr(getChg(k))} → #${posStr(getPos(k))}\n`
+            )
+            .join('');
+    };
+
+    section += `\n### ${m.hTopImprovements}\n\n`;
+    section += `**Google:**\n${renderChangeList(
+        googleImprovements,
+        k => k.changeGoogle,
+        k => k.positionGoogle
+    )}`;
+    section += `\n**Seznam:**\n${renderChangeList(
+        seznamImprovements,
+        k => k.changeSeznam,
+        k => k.positionSeznam
+    )}`;
+
+    section += `\n### ${m.hTopDeclines}\n\n`;
+    section += `**Google:**\n${renderChangeList(
+        googleDeclines,
+        k => k.changeGoogle,
+        k => k.positionGoogle
+    )}`;
+    section += `\n**Seznam:**\n${renderChangeList(
+        seznamDeclines,
+        k => k.changeSeznam,
+        k => k.positionSeznam
+    )}`;
+
+    // Category breakdown
+    section += `\n### ${m.hKeywordsByTag}\n\n`;
+    section += `| ${tc[0]} | ${tc[1]} | ${tc[2]} | ${tc[3]} |\n`;
+    section += `|----------|----------|-----------|-----------|\n`;
+    for (const [tag, list] of tagMap) {
+        const avgG = avgPos(list, k => k.positionGoogle);
+        const avgS = avgPos(list, k => k.positionSeznam);
+        section += `| ${tag} | ${list.length} | ${avgG} | ${avgS} |\n`;
+    }
+
+    return section;
+}
+
 function renderMarkdown(
     domain: string,
     dates: string[],
     pages: IPageRecord[],
     analyses: IPageAnalysis[],
-    pdfPages: IPageRecord[]
+    pdfPages: IPageRecord[],
+    keywordPositions: IKeywordPosition[] = []
 ): string {
     const total = analyses.length;
     const criticalCount = analyses.filter(a =>
@@ -817,6 +994,8 @@ ${roadmapRows}
 
 ${todos.join('\n\n---\n\n')}
 
+${renderKeywordSection(keywordPositions, m)}
+
 ---
 
 ## ${m.sPdfFiles}
@@ -901,8 +1080,20 @@ const main = (): void => {
         console.log('🔬 Analyzing pages...');
         const analyses = pages.map(analyzePage);
 
+        const keywordPositions = parseKeywordPositions(domain);
+        if (keywordPositions.length > 0) {
+            console.log(`📊 Keyword positions loaded: ${keywordPositions.length}`);
+        }
+
         console.log('📝 Generating SEO audit report...');
-        const markdown = renderMarkdown(domain, datesToLoad, pages, analyses, pdfPages);
+        const markdown = renderMarkdown(
+            domain,
+            datesToLoad,
+            pages,
+            analyses,
+            pdfPages,
+            keywordPositions
+        );
 
         const dateLabel = dateArg ?? `all-${allDates.length}-crawls`;
         // One folder per domain: storage/reports/<domain>/<date>/ (matches the other report
