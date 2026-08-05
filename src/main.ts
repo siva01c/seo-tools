@@ -1426,9 +1426,19 @@ const crawler = new PlaywrightCrawler({
 
                     if (isTargetDomain) {
                         headers.Authorization = basicAuthHeader;
+                        console.log(
+                            `🔐 Basic Auth header injected for ${request.url} (hostname: ${requestHostname})`
+                        );
+                    } else {
+                        console.log(
+                            `⏭️  Basic Auth skipped for ${request.url} (hostname: ${requestHostname}, allowed: [${allowedDomains.join(', ')}])`
+                        );
                     }
-                } catch {
+                } catch (err) {
                     // If URL parsing fails, don't inject auth header
+                    console.log(
+                        `⚠️ Error checking auth eligibility for ${request.url}: ${err instanceof Error ? err.message : String(err)}`
+                    );
                 }
             }
 
