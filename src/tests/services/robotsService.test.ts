@@ -58,6 +58,20 @@ Disallow: /bing-only
             expect(rules.disallow).toEqual(['/shared']);
         });
 
+        it('lets a non-rule group directive close the group', () => {
+            // Crawl-delay is a group member record, so the User-agent line after it opens a new
+            // group. Nothing else pins this down, and it is exactly where the old code differed.
+            const content = `
+User-agent: *
+Crawl-delay: 10
+
+User-agent: GPTBot
+Disallow: /
+`;
+            const rules = parseRobotsTxt(content);
+            expect(rules.disallow).toEqual([]);
+        });
+
         it('matches a group naming our own user-agent token', () => {
             const content = `
 User-agent: SEO-Crawler
@@ -65,6 +79,49 @@ Disallow: /no-crawler
 `;
             const rules = parseRobotsTxt(content, 'SEO-Crawler');
             expect(rules.disallow).toEqual(['/no-crawler']);
+        });
+
+        it('matches a group naming a prefix of our token', () => {
+            const content = `
+User-agent: SEO
+Disallow: /no-seo-bots
+`;
+            const rules = parseRobotsTxt(content, 'SEO-Crawler');
+            expect(rules.disallow).toEqual(['/no-seo-bots']);
+        });
+
+        it('does not match a group whose name merely occurs inside our token', () => {
+            // A substring test claimed this group for us, because 'seo-crawler' contains 'c'.
+            const content = `
+User-agent: c
+Disallow: /not-ours
+`;
+            const rules = parseRobotsTxt(content, 'SEO-Crawler');
+            expect(rules.disallow).toEqual([]);
+        });
+
+        it('does not match a longer, more specific agent name', () => {
+            const content = `
+User-agent: SEO-Crawler-Images
+Disallow: /images
+`;
+            const rules = parseRobotsTxt(content, 'SEO-Crawler');
+            expect(rules.disallow).toEqual([]);
+        });
+
+        it('treats a valueless User-agent line as naming no crawler', () => {
+            // Every string contains the empty string, so this group used to claim us and its
+            // blanket Disallow shut the crawl down.
+            const content = `
+User-agent:
+Disallow: /
+
+User-agent: *
+Allow: /
+`;
+            const rules = parseRobotsTxt(content, 'SEO-Crawler');
+            expect(rules.disallow).toEqual([]);
+            expect(rules.allow).toEqual(['/']);
         });
 
         it('ignores comments and blank lines', () => {

@@ -82,9 +82,16 @@ export const parseRobotsTxt = (content: string, userAgentToken = 'SEO-Crawler'):
             } else {
                 currentAgents.push(value.toLowerCase());
             }
-            groupApplies = currentAgents.some(
-                agent => agent === '*' || agent === targetToken || targetToken.includes(agent)
-            );
+            groupApplies = currentAgents.some(agent => {
+                // `User-agent:` with no value names no crawler. Left to the checks below it
+                // would match everything, since every string contains the empty string.
+                if (!agent) return false;
+                if (agent === '*') return true;
+                // Prefix, not substring: a group for `SEO` is meant for the `SEO-Crawler`
+                // family, but a substring test also matched any group whose name happened to
+                // appear anywhere in our token — `User-agent: c` claimed us too.
+                return targetToken.startsWith(agent);
+            });
             continue;
         }
 
