@@ -972,7 +972,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 2. Public Static Web Server (No auth)
-    if (req.method === 'GET' && !urlPath.startsWith('/api/')) {
+    // HEAD is served here too. Without it a HEAD request falls through every branch to
+    // the trailing JSON 404, so uptime monitors and crawlers that probe with HEAD see
+    // the site as down while GET returns 200.
+    if ((req.method === 'GET' || req.method === 'HEAD') && !urlPath.startsWith('/api/')) {
         // FRONTEND_DIR is mounted at the Hugo `config_seo.toml` publishDir root. That build has
         // defaultContentLanguage="en" with defaultContentLanguageInSubdir=false, so English is
         // published at the root and Czech under /cs/ — mirror that split here.
@@ -991,11 +994,12 @@ const server = http.createServer(async (req, res) => {
         const filePath = path.join(FRONTEND_DIR, subDir, safePath);
         const expectedPrefix = path.join(FRONTEND_DIR, subDir);
 
-        if (
-            filePath.startsWith(expectedPrefix + path.sep) &&
-            fs.existsSync(filePath) &&
-            fs.statSync(filePath).isFile()
-        ) {
+        const stat =
+            filePath.startsWith(expectedPrefix + path.sep) && fs.existsSync(filePath)
+                ? fs.statSync(filePath)
+                : null;
+
+        if (stat?.isFile()) {
             const ext = path.extname(filePath);
             let contentType = 'text/html';
             if (ext === '.css') contentType = 'text/css';
@@ -1008,7 +1012,17 @@ const server = http.createServer(async (req, res) => {
             else if (ext === '.ico') contentType = 'image/x-icon';
             else if (ext === '.webmanifest') contentType = 'application/manifest+json';
 
-            res.writeHead(200, { 'Content-Type': contentType, ...SECURITY_HEADERS });
+            // HEAD must carry the same headers as GET — Content-Length above all, since
+            // reporting the size without downloading is the point of the method.
+            res.writeHead(200, {
+                'Content-Type': contentType,
+                'Content-Length': stat.size,
+                ...SECURITY_HEADERS,
+            });
+            if (req.method === 'HEAD') {
+                res.end();
+                return;
+            }
             fs.createReadStream(filePath).pipe(res);
             return;
         }
