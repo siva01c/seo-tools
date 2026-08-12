@@ -807,17 +807,13 @@ const requestHandler = async ({
           }
         : undefined;
 
-    // Update crawling map with current URL status
+    // currentStatus/currentStatusText are needed immediately below for 403/302 handling.
+    // The crawlingMap write itself is deferred until after pushData() succeeds (see below) —
+    // writing it here, before extraction/pushData run, let a request that times out mid-extraction
+    // still be marked "already successfully crawled", so its retry got skipped and no data was
+    // ever saved even though Crawlee reported the request as succeeded.
     const currentStatus = response?.status() ?? null;
     const currentStatusText = response?.statusText() ?? null;
-    crawlingMap.set(currentUrl, {
-        status: currentStatus,
-        statusText: currentStatusText,
-        timestamp: new Date().toISOString(),
-        crawlCount: crawlingMap.has(currentUrl)
-            ? (crawlingMap.get(currentUrl)?.crawlCount ?? 0) + 1
-            : 1,
-    });
 
     console.log(`📊 Status tracking: ${currentUrl} → ${currentStatus} (${currentStatusText})`);
 
@@ -1166,6 +1162,17 @@ const requestHandler = async ({
 
     // Update URL status to completed in index
     urlIndexService.updateUrlStatus(currentUrl, 'completed');
+
+    // Mark this URL as durably saved for intra-run dedup only now that pushData() above has
+    // actually persisted it — see the comment near currentStatus/currentStatusText.
+    crawlingMap.set(currentUrl, {
+        status: currentStatus,
+        statusText: currentStatusText,
+        timestamp: new Date().toISOString(),
+        crawlCount: crawlingMap.has(currentUrl)
+            ? (crawlingMap.get(currentUrl)?.crawlCount ?? 0) + 1
+            : 1,
+    });
 
     // Extract links from the current page and add them to the crawling queue
     // Only enqueue internal links to stay within the same domain (unless in single URL mode)

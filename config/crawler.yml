@@ -31,8 +31,10 @@ crawler:
   # Maximum concurrent requests (reduced for visible crawling)
   maxConcurrency: 2
 
-  # Request timeout in seconds
-  requestTimeoutSecs: 30
+  # Request timeout in seconds — non-headless mode alone spends ~13s on its deliberate
+  # load/scroll/inspect wait before extraction even starts, so 30s left too little margin
+  # for heavy pages under memory pressure.
+  requestTimeoutSecs: 60
 
   # Show browser window (useful for debugging)
   headless: false

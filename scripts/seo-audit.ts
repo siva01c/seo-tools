@@ -1077,6 +1077,13 @@ const main = (): void => {
             `📄 Unique pages loaded: ${pages.length} HTML + ${pdfPages.length} PDF + ${nonHtmlPages.length} non-HTML (feeds/XML, excluded from analysis)`
         );
 
+        if (pages.length === 0) {
+            console.error(
+                `❌ 0 HTML pages loaded for ${domain} — refusing to write a misleadingly "clean" report. Check crawl logs for the actual failure.`
+            );
+            process.exit(1);
+        }
+
         console.log('🔬 Analyzing pages...');
         const analyses = pages.map(analyzePage);
 
