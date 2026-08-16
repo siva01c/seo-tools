@@ -62,4 +62,28 @@ maybeDescribe('reportPdfService (real Chromium render)', () => {
 
         expect(fs.statSync(pdfPath).mtimeMs).toBe(before);
     }, 180000);
+
+    // Regression: the timeout used to race around the outside of the render, which abandoned a
+    // live Chromium and released the queue — the memory guard failing in exactly the hung-render
+    // case it exists for. A timed-out render must leave the queue usable and nothing on disk.
+    it('recovers cleanly from a render that runs out of time', async () => {
+        const timedOutMd = path.join(tmpDir, 'timeout-cs.md');
+        fs.writeFileSync(timedOutMd, '# timeout\n\n## 1. Section\n\ntext\n');
+
+        const previous = process.env.SEO_PDF_TIMEOUT_MS;
+        process.env.SEO_PDF_TIMEOUT_MS = '1';
+        try {
+            await expect(ensureReportPdf(timedOutMd)).rejects.toThrow();
+        } finally {
+            if (previous === undefined) delete process.env.SEO_PDF_TIMEOUT_MS;
+            else process.env.SEO_PDF_TIMEOUT_MS = previous;
+        }
+
+        expect(fs.existsSync(pdfPathFor(timedOutMd))).toBe(false);
+        expect(fs.existsSync(`${pdfPathFor(timedOutMd)}.tmp`)).toBe(false);
+
+        // The queue must still work afterwards.
+        const recovered = await ensureReportPdf(timedOutMd, { domain: 'example.com' });
+        expect(fs.readFileSync(recovered).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    }, 180000);
 });

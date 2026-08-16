@@ -17,8 +17,13 @@ import { Marked, type Tokens } from 'marked';
  * ✅/🔴/🟡 severity markers and the Czech diacritics come out as glyphs rather than tofu.
  */
 
-/** Wall-clock budget for one render, including browser startup. */
-const PDF_TIMEOUT_MS = Number(process.env.SEO_PDF_TIMEOUT_MS ?? 120000);
+/** Wall-clock budget for one render, including browser startup. Read per call so tests can vary it. */
+function pdfTimeoutMs(): number {
+    return Number(process.env.SEO_PDF_TIMEOUT_MS ?? 120000);
+}
+
+/** How long a shutdown of an already-failed browser may take before it is given up on. */
+const BROWSER_CLOSE_TIMEOUT_MS = 10000;
 
 export type TReportLang = 'cs' | 'en';
 
@@ -281,12 +286,23 @@ async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Prom
     }
 }
 
+/**
+ * The whole render — browser startup included — must fit inside the timeout, and the browser has
+ * to be gone before this function settles. Timing out around the outside instead would abandon a
+ * live Chromium: the queue below would release and start a second one, which is exactly the
+ * memory guard failing in the slow/hung case it exists for.
+ */
 async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promise<Buffer> {
     const labels = LABELS[options.lang ?? 'cs'];
+    const deadline = Date.now() + pdfTimeoutMs();
+    const remaining = (): number => Math.max(1, deadline - Date.now());
+
     // page.pdf() is Chromium-headless-only, so this launches its own browser rather than
     // reusing anything from the crawler (which deliberately runs headed under Xvfb).
+    // launch() enforces its own timeout and kills whatever it started, so it needs no race.
     const browser = await chromium.launch({
         headless: true,
+        timeout: remaining(),
         args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     });
     try {
@@ -294,9 +310,12 @@ async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promis
         // phone home could only have come from crawled page content.
         const context = await browser.newContext({ javaScriptEnabled: false });
         const page = await context.newPage();
+        page.setDefaultTimeout(remaining());
         await page.route('**/*', route => route.abort());
-        await page.setContent(html, { waitUntil: 'load' });
-        return await page.pdf({
+        await page.setContent(html, { waitUntil: 'load', timeout: remaining() });
+        // page.pdf() takes no timeout option of its own, so it is the one call that needs an
+        // explicit race — kept inside the try so the finally below still runs first.
+        const pdf = page.pdf({
             format: 'A4',
             printBackground: true,
             margin: { top: '14mm', right: '12mm', bottom: '16mm', left: '12mm' },
@@ -304,8 +323,14 @@ async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promis
             headerTemplate: '<span></span>',
             footerTemplate: footerTemplate(labels, options.domain),
         });
+        return await withTimeout(pdf, remaining(), 'page.pdf()');
     } finally {
-        await browser.close();
+        // Bounded too: a Chromium wedged badly enough to ignore close() must not hold the render
+        // queue shut forever. close() kills the process after its own grace period, so this
+        // only ever fires in the pathological case.
+        await withTimeout(browser.close(), BROWSER_CLOSE_TIMEOUT_MS, 'browser.close()').catch(err =>
+            console.error('[reportPdf] Chromium did not shut down cleanly:', err)
+        );
     }
 }
 
@@ -347,11 +372,9 @@ export async function ensureReportPdf(
             domain: options.domain,
         };
         const html = renderMarkdownToHtml(markdown, renderOptions);
-        const buffer = await withTimeout(
-            renderHtmlToPdf(html, renderOptions),
-            PDF_TIMEOUT_MS,
-            'PDF render'
-        );
+        // renderHtmlToPdf owns the timeout itself, so the queue is not released until its
+        // browser is actually gone.
+        const buffer = await renderHtmlToPdf(html, renderOptions);
 
         // Write through a temp file so an interrupted render can never leave a truncated PDF
         // that looks fresh to isPdfStale().
