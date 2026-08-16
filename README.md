@@ -1,13 +1,14 @@
 # On-Page SEO Analyzer
 
-An on-page SEO analyzer that crawls a site and turns the result into actionable audits: SEO
-issue reports (titles, meta descriptions, canonicals, structured data, broken links), a
-comprehensive Markdown audit, optional LLM-powered title/meta-description fix suggestions, and an
-MCP server that exposes it all to AI agents. The Crawlee + Playwright crawler underneath extracts
-Google-supported SEO tags, structured data (JSON-LD/microdata), and AI-indexing metadata; the
-reporting layer is where the value is.
+An on-page SEO analyzer that crawls a site and turns the result into actionable audits: SEO issue
+reports (titles, meta descriptions, canonicals, structured data, broken links), a comprehensive
+Markdown audit, optional LLM-powered title/meta-description fix suggestions, and an MCP server that
+exposes it all to AI agents. The Crawlee + Playwright crawler underneath extracts Google-supported
+SEO tags, structured data (JSON-LD/microdata), and AI-indexing metadata; the reporting layer is
+where the value is.
 
-The typical workflow is **crawl once → run reports** — see [Reports & Analysis](#-reports--analysis).
+The typical workflow is **crawl once → run reports** — see
+[Reports & Analysis](#-reports--analysis).
 
 **Docker Compose is the recommended runtime** (reproducible, no host setup) — run crawler commands
 inside the `app` service. Local development without Docker also works: `npm install` then use the
@@ -68,9 +69,9 @@ Exclude specific subdomains or domains from crawling:
 ```yaml
 targets:
   excludedDomains:
-    - "api.example.com" # Exclude API subdomain
-    - "cdn.example.com" # Exclude CDN subdomain
-    - "static.example.com" # Exclude static assets
+    - 'api.example.com' # Exclude API subdomain
+    - 'cdn.example.com' # Exclude CDN subdomain
+    - 'static.example.com' # Exclude static assets
 ```
 
 #### Command Line Method
@@ -95,10 +96,10 @@ Exclude specific URL paths from crawling:
 ```yaml
 targets:
   excludedPaths:
-    - "/user/login" # Exclude login pages
-    - "/admin" # Exclude admin section
-    - "/api/" # Exclude API endpoints
-    - "/private" # Exclude private pages
+    - '/user/login' # Exclude login pages
+    - '/admin' # Exclude admin section
+    - '/api/' # Exclude API endpoints
+    - '/private' # Exclude private pages
 ```
 
 #### Command Line Method
@@ -142,8 +143,8 @@ docker compose run --rm app npm run crawl -- https://example.com --incremental
 crawler:
   incrementalMode: true
   incrementalConfig:
-    previousCrawlDate: "12-07-2025" # DD-MM-YYYY format
-    mode: "incremental" # incremental | new-only | modified-only | all
+    previousCrawlDate: '12-07-2025' # DD-MM-YYYY format
+    mode: 'incremental' # incremental | new-only | modified-only | all
     autoDetectPreviousCrawl: true
     maxAgeThresholdDays: 30 # Consider URLs older than 30 days as modified
 ```
@@ -235,12 +236,12 @@ crawler:
       - windowHours: 1 # 1 hour window
         maxRequests: 100 # Max 100 requests per hour
         enabled: true
-        description: "Hourly limit"
+        description: 'Hourly limit'
 
       - windowHours: 3 # 3 hour window
         maxRequests: 250 # Max 250 requests per 3 hours
         enabled: true
-        description: "3-hour limit"
+        description: '3-hour limit'
 ```
 
 ### Built-in Presets
@@ -381,8 +382,8 @@ also supporting `--csv`). Run any of them inside the `app` container.
 > active link/href checkers additionally make live HTTP requests.
 
 **Language:** every report accepts `--language <code>` — empty/absent = English (default), `cs` =
-Czech. Czech output is written to a separate `…-cs.{md,json,csv}` file so both languages can coexist.
-Example: `… npm run seo-audit -- --domain example.com --language cs`.
+Czech. Czech output is written to a separate `…-cs.{md,json,csv}` file so both languages can
+coexist. Example: `… npm run seo-audit -- --domain example.com --language cs`.
 
 ### SEO Audit — `seo-audit.ts`
 
@@ -397,6 +398,24 @@ Service, FAQ, Branch/Contact, …), and emits a prioritized recommendations tabl
 docker compose run --rm app npm run seo-audit -- --domain example.com
 # Options: --date DD-MM-YYYY (pick a crawl date), --output <file.md>
 # Output:  storage/reports/seo-audit-<domain>-<date>.md
+```
+
+### PDF Export — `report-pdf.ts`
+
+Renders an existing audit report to a **print-ready A4 PDF** next to the `.md`, with a linked table
+of contents, repeating table headers and page numbers. Raw Markdown reads badly on a phone, so this
+is what `/api/crawl` attaches to the result email — the server renders it lazily at send time and
+caches it, so this script is only needed to preview the typography or to backfill older reports.
+
+Rendering uses the Chromium already present in the image (no extra dependency); renders are
+serialised one at a time and bounded by `SEO_PDF_TIMEOUT_MS` (default 120 s) so a busy container
+cannot end up holding two browsers at once. If a render fails, the email falls back to attaching the
+`.md`.
+
+```bash
+docker compose run --rm app npm run report:pdf -- --domain example.com
+# Options: --md <report.md> (explicit file), --date DD-MM-YYYY, --force (re-render)
+# Output:  storage/reports/<domain>/<date>/seo-audit-<date>[-cs].pdf
 ```
 
 ### SEO Issues — `report-seo-issues.ts`
@@ -457,7 +476,8 @@ docker compose run --rm app npx tsx scripts/check-broken-links.ts --domain examp
 
 Scans each page's **raw HTML** for anchors with broken hrefs: `empty` (`href=""` → reloads the
 page), `missing` (no `href` → non-navigable), `hash` (`href="#"`), and `javascript:` pseudo-links.
-Requires HTML content extraction (`--html-content` at crawl time, or `extraction.modules.htmlContent: true`).
+Requires HTML content extraction (`--html-content` at crawl time, or
+`extraction.modules.htmlContent: true`).
 
 ```bash
 docker compose run --rm app npx tsx scripts/check-empty-href.ts --domain example.com
@@ -664,9 +684,9 @@ docker compose run --rm app npm run crawl -- https://www.example.com --headless=
 ```yaml
 targets:
   excludedDomains:
-    - "api.example.com"
-    - "cdn.example.com"
-    - "static.example.com"
+    - 'api.example.com'
+    - 'cdn.example.com'
+    - 'static.example.com'
 
 crawler:
   maxRequestsPerCrawl: 0 # Page limit (0 = unlimited)
@@ -679,30 +699,30 @@ crawler:
   rateLimiting:
     enabled: false # Enable/disable rate limiting
     persistData: true # Save request history across sessions
-    preset: "moderate" # Use built-in preset
+    preset: 'moderate' # Use built-in preset
     # OR define custom rules:
     rules:
       - windowHours: 1
         maxRequests: 100
         enabled: true
-        description: "Hourly limit"
+        description: 'Hourly limit'
 
   # Browser launch arguments (configurable in YAML)
   launchArgs:
     headless: # Stealth mode arguments
-      - "--no-sandbox"
-      - "--disable-setuid-sandbox"
-      - "--disable-dev-shm-usage"
-      - "--disable-blink-features=AutomationControlled"
-      - "--disable-features=VizDisplayCompositor"
+      - '--no-sandbox'
+      - '--disable-setuid-sandbox'
+      - '--disable-dev-shm-usage'
+      - '--disable-blink-features=AutomationControlled'
+      - '--disable-features=VizDisplayCompositor'
 
     visible: # Visible browser arguments
-      - "--no-sandbox"
-      - "--disable-setuid-sandbox"
-      - "--disable-dev-shm-usage"
-      - "--disable-blink-features=AutomationControlled"
-      - "--no-first-run"
-      - "--no-default-browser-check"
+      - '--no-sandbox'
+      - '--disable-setuid-sandbox'
+      - '--disable-dev-shm-usage'
+      - '--disable-blink-features=AutomationControlled'
+      - '--no-first-run'
+      - '--no-default-browser-check'
 
 output:
   storage:
@@ -792,7 +812,9 @@ The crawler requires a target URL to be provided via:
 
 ## 🤖 MCP Server & AI Persona (Marek)
 
-The project includes an **MCP (Model Context Protocol)** server that enables LLM models and AI agent workflows (like Claude Code, Cursor, or custom gateway bots) to interact with the crawling engine and access reports.
+The project includes an **MCP (Model Context Protocol)** server that enables LLM models and AI agent
+workflows (like Claude Code, Cursor, or custom gateway bots) to interact with the crawling engine
+and access reports.
 
 It also integrates the AI persona **Marek** — a senior SEO consultant.
 
@@ -803,18 +825,19 @@ It also integrates the AI persona **Marek** — a senior SEO consultant.
     - `get_report`: Retrieve report status or data for a domain.
     - `list_reports`: List all crawled domains and their audit dates.
 2.  **Prompts (Templates):**
-    - `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`). Supports a `domain` argument which appends the latest crawl report as context.
+    - `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`).
+      Supports a `domain` argument which appends the latest crawl report as context.
 3.  **Resources (Data Sources):**
-    - `seo://reports/{domain}/latest`: Serves the latest generated Markdown audit report for the specified domain.
+    - `seo://reports/{domain}/latest`: Serves the latest generated Markdown audit report for the
+      specified domain.
 
 ### Running the MCP Server
 
-- **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container port `3000` on the `mcp` service).
-- **Locally:**
-  `bash
-    npm run mcp
-    `
-  Requires setting `SEO_MCP_TOKEN` in `.env` for Basic Authorization (if configured). For more details on the persona's role and rules, see [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
+- **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container
+  port `3000` on the `mcp` service).
+- **Locally:** `bash   npm run mcp   ` Requires setting `SEO_MCP_TOKEN` in `.env` for Basic
+  Authorization (if configured). For more details on the persona's role and rules, see
+  [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
 
 ## 📈 Performance Tips
 

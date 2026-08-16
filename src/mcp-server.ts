@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { checkUrlIsSafeToRequest } from './services/ssrfGuard.js';
+import { ensureReportPdf } from './services/reportPdfService.js';
 
 const PORT = parseInt(process.env.MCP_PORT ?? '3001', 10);
 const SEO_MCP_TOKEN = process.env.SEO_MCP_TOKEN ?? '';
@@ -838,10 +839,43 @@ async function readJsonBody(req: http.IncomingMessage, maxBytes: number): Promis
     return JSON.parse(body || '{}');
 }
 
+interface IReportAttachment {
+    content: Buffer;
+    filename: string;
+    contentType: string;
+}
+
+/**
+ * Builds the e-mail attachment for a generated report: a PDF, because raw Markdown is
+ * unreadable on a phone. The .md stays on disk untouched — it is what get_report serves and
+ * what the cached-report branch reads.
+ *
+ * A render failure degrades to attaching the Markdown rather than dropping the report: on the
+ * 1.5 G container a Chromium launch is the most plausible thing to fail here, and a
+ * harder-to-read report still beats no report.
+ */
+async function buildReportAttachment(mdPath: string, domain: string): Promise<IReportAttachment> {
+    try {
+        const pdfPath = await ensureReportPdf(mdPath, { domain });
+        return {
+            content: fs.readFileSync(pdfPath),
+            filename: `seo-audit-${domain}.pdf`,
+            contentType: 'application/pdf',
+        };
+    } catch (err) {
+        console.error(`[mcp-server] PDF render failed for ${mdPath}, falling back to .md:`, err);
+        return {
+            content: fs.readFileSync(mdPath),
+            filename: `seo-audit-${domain}.md`,
+            contentType: 'text/markdown; charset=utf-8',
+        };
+    }
+}
+
 async function sendSeoEmail(
     toEmail: string,
     domain: string,
-    reportMarkdown: string
+    attachment: IReportAttachment
 ): Promise<void> {
     const mailApiUrl =
         process.env.MAIL_API_URL ?? 'http://sales-assistant-assistant-1:8000/api/mail/send';
@@ -870,8 +904,6 @@ async function sendSeoEmail(
     const subject = `SEO Audit Report pro doménu: ${domain}`;
     const body = `Dobrý den,\n\nv příloze Vám zasíláme vygenerovaný SEO Audit Report pro doménu: ${domain}.\n\nS pozdravem,\nRobot Luďka Kvapila`;
 
-    const base64Content = Buffer.from(reportMarkdown).toString('base64');
-
     const response = await fetch(mailApiUrl, {
         method: 'POST',
         headers: {
@@ -886,9 +918,9 @@ async function sendSeoEmail(
             bcc_emails: toEmail.trim().toLowerCase() === bccEmail.toLowerCase() ? [] : [bccEmail],
             attachments: [
                 {
-                    content: base64Content,
-                    filename: `seo-audit-${domain}.md`,
-                    content_type: 'text/markdown; charset=utf-8',
+                    content: attachment.content.toString('base64'),
+                    filename: attachment.filename,
+                    content_type: attachment.contentType,
                 },
             ],
         }),
@@ -1072,10 +1104,7 @@ const server = http.createServer(async (req, res) => {
                 const reportFile = files.find(f => f.endsWith('.md'));
                 if (reportFile) {
                     const jobId = crypto.randomUUID();
-                    const mdContent = fs.readFileSync(
-                        path.join(cachedReportsDir, reportFile),
-                        'utf8'
-                    );
+                    const mdPath = path.join(cachedReportsDir, reportFile);
 
                     jobs.set(jobId, {
                         status: 'done',
@@ -1093,7 +1122,10 @@ const server = http.createServer(async (req, res) => {
                         console.log(
                             `[mcp-server] Reusing cached report. Sending email to ${emailInput}...`
                         );
-                        sendSeoEmail(emailInput, domain, mdContent)
+                        // The PDF is cached alongside the .md, so a same-day repeat request
+                        // reuses it instead of launching Chromium again.
+                        buildReportAttachment(mdPath, domain)
+                            .then(attachment => sendSeoEmail(emailInput, domain, attachment))
                             .then(() =>
                                 console.log(`[mcp-server] Cached email sent to ${emailInput}`)
                             )
@@ -1214,33 +1246,47 @@ const server = http.createServer(async (req, res) => {
                                     const files = fs.readdirSync(reportPath);
                                     const reportFile = files.find(f => f.endsWith('.md'));
                                     if (reportFile) {
-                                        const mdContent = fs.readFileSync(
-                                            path.join(reportPath, reportFile),
-                                            'utf8'
-                                        );
-                                        for (const email of emailsToNotify) {
-                                            pushLog(
-                                                job,
-                                                `[server] Sending audit report email to ${email}...\n`
-                                            );
-                                            sendSeoEmail(email, domain, mdContent)
-                                                .then(() => {
+                                        const mdPath = path.join(reportPath, reportFile);
+                                        pushLog(job, `[server] Rendering PDF report...\n`);
+                                        // Rendered once and reused for every recipient — the
+                                        // same job can have several addresses attached to it.
+                                        buildReportAttachment(mdPath, domain)
+                                            .then(attachment => {
+                                                pushLog(
+                                                    job,
+                                                    `[server] Report attachment ready: ${attachment.filename}.\n`
+                                                );
+                                                for (const email of emailsToNotify) {
                                                     pushLog(
                                                         job,
-                                                        `[server] Audit report email sent successfully to ${email}.\n`
+                                                        `[server] Sending audit report email to ${email}...\n`
                                                     );
-                                                })
-                                                .catch((err: any) => {
-                                                    pushLog(
-                                                        job,
-                                                        `[server] Failed to send email to ${email}: ${err.message}\n`
-                                                    );
-                                                    console.error(
-                                                        `Email sending failed for ${email}:`,
-                                                        err
-                                                    );
-                                                });
-                                        }
+                                                    sendSeoEmail(email, domain, attachment)
+                                                        .then(() => {
+                                                            pushLog(
+                                                                job,
+                                                                `[server] Audit report email sent successfully to ${email}.\n`
+                                                            );
+                                                        })
+                                                        .catch((err: any) => {
+                                                            pushLog(
+                                                                job,
+                                                                `[server] Failed to send email to ${email}: ${err.message}\n`
+                                                            );
+                                                            console.error(
+                                                                `Email sending failed for ${email}:`,
+                                                                err
+                                                            );
+                                                        });
+                                                }
+                                            })
+                                            .catch((err: any) => {
+                                                pushLog(
+                                                    job,
+                                                    `[server] Could not prepare report attachment: ${err.message}\n`
+                                                );
+                                                console.error('Attachment preparation error:', err);
+                                            });
                                     } else {
                                         pushLog(
                                             job,

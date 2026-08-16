@@ -107,7 +107,10 @@ allowlist). This phase closes the remaining gaps, not rebuilds any of that.
       to disk except indirectly (domain name + failure count, not email, in `crawl_alerts.jsonl` on
       3+ consecutive failures). No durable email store exists yet, so no data-subject-deletion path
       is needed yet — revisit at Phase C (persistent accounts).
-- [x] Created dedicated GDPR compliance & remediation roadmap in [`docs/gdpr-compliance-plan.md`](file:///home/siva01/projects/lkv/seo-tools/docs/gdpr-compliance-plan.md), detailing automated retention scheduling, transparency/privacy notices, consent management, DSAR workflows, and LLM PII safeguards.
+- [x] Created dedicated GDPR compliance & remediation roadmap in
+      [`docs/gdpr-compliance-plan.md`](file:///home/siva01/projects/lkv/seo-tools/docs/gdpr-compliance-plan.md),
+      detailing automated retention scheduling, transparency/privacy notices, consent management,
+      DSAR workflows, and LLM PII safeguards.
 - [x] Flagged tenant isolation as a hard Phase C prerequisite in `docs/security.md`: no multi-tenant
       storage exists today (all crawl data in one shared `storage/` tree), so any account/tenant
       model must design per-tenant storage scoping from day one, not retrofit it.
@@ -221,8 +224,10 @@ sequenced against the security/scoring prerequisites above.
 
 ## Phase D — Nice-to-have / Future
 
-- [ ] PDF export of reports (agencies will ask immediately per `docs/business-plan.md` open
-      questions) — Markdown→PDF render off the existing `seo-audit.ts` output.
+- [x] PDF export of reports (agencies will ask immediately per `docs/business-plan.md` open
+      questions) — Markdown→PDF render off the existing `seo-audit.ts` output. Done:
+      `src/services/reportPdfService.ts` renders the .md through the Chromium already in the image;
+      report emails carry the PDF, the .md stays on disk for `get_report`.
 - [ ] CAPTCHA or proof-of-work challenge on the public `/api/crawl` endpoint if abuse persists
       beyond IP rate limiting (only needed if A2/A3 prove insufficient in practice).
 - [ ] Competitor comparison mode (crawl two domains, diff scores/categories) — natural extension

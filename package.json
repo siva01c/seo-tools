@@ -12,6 +12,7 @@
     "crawlee": "^3.0.0",
     "dotenv": "^17.3.1",
     "js-yaml": "^4.1.0",
+    "marked": "^18.0.9",
     "openai": "^6.47.0",
     "playwright": "1.60.0"
   },
@@ -47,6 +48,7 @@
     "report:404": "tsx scripts/report-404s.ts",
     "report:seo-issues": "tsx scripts/report-seo-issues.ts",
     "seo-audit": "tsx scripts/seo-audit.ts",
+    "report:pdf": "tsx scripts/report-pdf.ts",
     "purge-old-data": "tsx scripts/purge-old-data.ts",
     "build": "tsc",
     "test": "NODE_ENV=test NODE_OPTIONS=\"--experimental-vm-modules\" jest",
