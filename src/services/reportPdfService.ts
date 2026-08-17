@@ -19,7 +19,11 @@ import { Marked, type Tokens } from 'marked';
 
 /** Wall-clock budget for one render, including browser startup. Read per call so tests can vary it. */
 function pdfTimeoutMs(): number {
-    return Number(process.env.SEO_PDF_TIMEOUT_MS ?? 120000);
+    // Number(undefined) and Number('') both fail this check (NaN and 0 respectively), so a
+    // missing or blank/malformed env value falls back to the default instead of collapsing the
+    // deadline to ~0ms.
+    const parsed = Number(process.env.SEO_PDF_TIMEOUT_MS);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 120000;
 }
 
 /** How long a shutdown of an already-failed browser may take before it is given up on. */
@@ -110,23 +114,6 @@ interface ITocEntry {
     title: string;
 }
 
-/**
- * Walks every heading in document order assigning slugs, and keeps the level-2 ones for the
- * table of contents. The render pass below repeats the same walk with a fresh Slugger — same
- * order, same input, so the ids match by construction.
- */
-function collectToc(marked: Marked, markdown: string): ITocEntry[] {
-    const slugger = new Slugger();
-    const toc: ITocEntry[] = [];
-    for (const token of marked.lexer(markdown)) {
-        if (token.type !== 'heading') continue;
-        const heading = token as Tokens.Heading;
-        const id = slugger.slug(heading.text);
-        if (heading.depth === 2) toc.push({ id, title: heading.text });
-    }
-    return toc;
-}
-
 function printStylesheet(): string {
     // A4 at 10pt with the inventory tables dropped to 8pt: section 3 of a real report is a
     // 6-column table with one row per crawled page (187 on ludekkvapil.cz), so fixed layout
@@ -210,8 +197,10 @@ blockquote {
 export function renderMarkdownToHtml(markdown: string, options: IPdfRenderOptions = {}): string {
     const labels = LABELS[options.lang ?? 'cs'];
     const marked = new Marked({ gfm: true, breaks: false, async: false });
-    const toc = collectToc(marked, markdown);
     const slugger = new Slugger();
+    // Filled in as a side effect of parsing below, so a TOC entry's title is always exactly the
+    // HTML the matching <h2> rendered — not a second, independently-escaped copy of it.
+    const toc: ITocEntry[] = [];
 
     marked.use({
         renderer: {
@@ -219,6 +208,7 @@ export function renderMarkdownToHtml(markdown: string, options: IPdfRenderOption
                 const heading = token as Tokens.Heading;
                 const id = slugger.slug(heading.text);
                 const body = this.parser.parseInline(heading.tokens);
+                if (heading.depth === 2) toc.push({ id, title: body });
                 return `<h${heading.depth} id="${id}">${body}</h${heading.depth}>\n`;
             },
             html(token) {
@@ -227,23 +217,27 @@ export function renderMarkdownToHtml(markdown: string, options: IPdfRenderOption
         },
     });
 
-    // Split off the report's own title block (h1 + meta + rule) so the table of contents can sit
-    // under it on the first page instead of pushing it onto page 2. Every `## ` section that
-    // follows starts its own page anyway.
-    const firstSection = markdown.startsWith('# ') ? markdown.search(/^## /m) : -1;
-    const coverMd = firstSection > 0 ? markdown.slice(0, firstSection) : '';
-    const bodyMd = firstSection > 0 ? markdown.slice(firstSection) : markdown;
+    // Lexed once. Splitting off the report's own title block (h1 + meta + rule) — so the table
+    // of contents can sit under it on the first page instead of pushing it onto page 2 — happens
+    // on these tokens rather than a raw-string regex, so a `## `-looking line quoted inside a
+    // fenced code block (crawled page content is attacker-controlled, see above) can never be
+    // mistaken for a real section boundary: the lexer already tokenizes fenced content as a
+    // single opaque 'code' token.
+    const tokens = marked.lexer(markdown);
+    const splitIndex = markdown.startsWith('# ')
+        ? tokens.findIndex(t => t.type === 'heading' && (t as Tokens.Heading).depth === 2)
+        : -1;
+    const coverTokens = splitIndex > 0 ? tokens.slice(0, splitIndex) : [];
+    const bodyTokens = splitIndex > 0 ? tokens.slice(splitIndex) : tokens;
 
-    // Parsed cover-first so the shared slugger walks headings in document order.
-    const coverHtml = coverMd ? (marked.parse(coverMd) as string) : '';
-    const bodyHtml = marked.parse(bodyMd) as string;
+    // Parsed cover-first so the shared slugger — and the toc array above — fill in document order.
+    const coverHtml = coverTokens.length ? (marked.parser(coverTokens) as string) : '';
+    const bodyHtml = marked.parser(bodyTokens) as string;
 
     const tocHtml =
         toc.length > 1
             ? `<nav class="toc"><h2>${escapeHtml(labels.contents)}</h2><ul>` +
-              toc
-                  .map(entry => `<li><a href="#${entry.id}">${escapeHtml(entry.title)}</a></li>`)
-                  .join('') +
+              toc.map(entry => `<li><a href="#${entry.id}">${entry.title}</a></li>`).join('') +
               '</ul></nav>\n'
             : '';
 
@@ -299,13 +293,18 @@ async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promis
 
     // page.pdf() is Chromium-headless-only, so this launches its own browser rather than
     // reusing anything from the crawler (which deliberately runs headed under Xvfb).
-    // launch() enforces its own timeout and kills whatever it started, so it needs no race.
-    const browser = await chromium.launch({
+    // launchServer() enforces its own timeout and kills whatever it started, so it needs no race.
+    //
+    // Launched as a server rather than via chromium.launch(): a plain Browser's close() can only
+    // ask nicely, with no forceful escape hatch if it hangs. BrowserServer additionally exposes
+    // kill(), which sends SIGKILL directly — the fallback used in the finally below.
+    const server = await chromium.launchServer({
         headless: true,
         timeout: remaining(),
         args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
     });
     try {
+        const browser = await chromium.connect(server.wsEndpoint(), { timeout: remaining() });
         // No JS and no network: the document is fully inlined, so anything that tried to run or
         // phone home could only have come from crawled page content.
         const context = await browser.newContext({ javaScriptEnabled: false });
@@ -325,11 +324,21 @@ async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promis
         });
         return await withTimeout(pdf, remaining(), 'page.pdf()');
     } finally {
-        // Bounded too: a Chromium wedged badly enough to ignore close() must not hold the render
-        // queue shut forever. close() kills the process after its own grace period, so this
-        // only ever fires in the pathological case.
-        await withTimeout(browser.close(), BROWSER_CLOSE_TIMEOUT_MS, 'browser.close()').catch(err =>
-            console.error('[reportPdf] Chromium did not shut down cleanly:', err)
+        // Bounded too: a Chromium wedged badly enough to ignore a graceful close() must not hold
+        // the render queue shut forever. If the graceful path doesn't finish in time, kill()
+        // forces the issue instead of just giving up on waiting for it.
+        await withTimeout(server.close(), BROWSER_CLOSE_TIMEOUT_MS, 'browser close()').catch(
+            async closeErr => {
+                console.error(
+                    '[reportPdf] Chromium did not shut down cleanly, killing it:',
+                    closeErr
+                );
+                await server
+                    .kill()
+                    .catch(killErr =>
+                        console.error('[reportPdf] Failed to kill Chromium:', killErr)
+                    );
+            }
         );
     }
 }
