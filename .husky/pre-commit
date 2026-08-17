@@ -3,5 +3,8 @@
 
 echo "Running pre-commit hooks..."
 
+# Block internal infrastructure details from reaching this PUBLIC repo
+sh scripts/check-no-internal-refs.sh || exit 1
+
 # Run lint-staged to check staged files
 npx lint-staged
