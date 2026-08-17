@@ -123,6 +123,34 @@ about one page every 12 seconds).
 **Worst case not directly measured:** two _visible_ crawls via the public endpoint. Extrapolating
 from the single-crawl figure that is ~600 MB — roughly 40 % of the limit, still leaving >1 GB free.
 
+### PDF report rendering (added 2026-08-16)
+
+Report emails carry a PDF rendered from the `.md` (`src/services/reportPdfService.ts`), which means
+a second, short-lived Chromium. Measured in the production base image under `--memory=1.5g`,
+rendering the real 39-page ludekkvapil.cz report:
+
+| Scenario                             | Container peak | Duration |
+| ------------------------------------ | -------------- | -------- |
+| Idle (nothing running)               | 1–7 MB         | —        |
+| One PDF render, 39 pages, 356 kB out | **310 MB**     | ~0.6 s   |
+| After the render returns             | 5 MB           | —        |
+
+So a render costs about what a crawl does, but for well under a second rather than minutes, and the
+memory is returned immediately when the browser closes. Two guards keep it bounded:
+
+- **Renders are serialised to one at a time** (a module-level promise chain in
+  `reportPdfService.ts`). Two audits finishing together queue rather than launching two browsers.
+- **`SEO_PDF_TIMEOUT_MS`** (default 120 s) kills a stuck render, and the email then falls back to
+  attaching the `.md` — a Chromium failure degrades the format, it does not lose the report.
+
+Worst case is therefore 2 concurrent crawls (~610 MB) plus one render (~310 MB) ≈ 950 MB, still
+inside the 1.5 G limit. The figures above come from `tsx`, which compiles TypeScript on the fly;
+production runs the compiled `dist/`, so the real peak is somewhat lower.
+
+Rendered PDFs are cached next to the `.md` and only re-rendered when the Markdown is newer, so a
+same-day repeat request for a domain launches no browser at all. They land in
+`storage/reports/<domain>/<date>/` and are covered by the existing `purge-old-data.ts` retention.
+
 ### Verification performed
 
 - `docker inspect` → `Memory: 1610612736`, `Reservation: 536870912` (was `0 0`)
