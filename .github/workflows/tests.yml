@@ -7,6 +7,18 @@ on:
   pull_request:
 
 jobs:
+  no-internal-refs:
+    name: No internal infrastructure details
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Catches leaks committed with --no-verify or from a clone without husky installed
+      - name: Scan tracked files
+        run: sh scripts/check-no-internal-refs.sh --all
+
   test:
     name: Run tests in Docker
     runs-on: ubuntu-latest

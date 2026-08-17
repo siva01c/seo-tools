@@ -347,7 +347,7 @@ async function renderHtmlToPdf(html: string, options: IPdfRenderOptions): Promis
 
 /**
  * Renders are serialised to one at a time. The VPS container is capped at 1.5 G with
- * SEO_MAX_CONCURRENT_CRAWLS=2 and no swap (docs/memory-optimization.md), so two audits
+ * SEO_MAX_CONCURRENT_CRAWLS=2 and no swap, so two audits
  * finishing together must not hold two Chromium instances at once.
  */
 let renderChain: Promise<unknown> = Promise.resolve();
