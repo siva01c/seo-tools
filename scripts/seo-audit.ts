@@ -275,7 +275,7 @@ function analyzePage(page: IPageRecord): IPageAnalysis {
 // `)`, `|`, or backtick characters designed to break out of Markdown link/table/code syntax).
 // Escape before embedding in any report output. Does not attempt full XSS sanitization —
 // reports are Markdown-as-text today; revisit before any HTML/dashboard rendering (see
-// docs/todo.md A4).
+// internal backlog A4).
 function mdEscapeUrl(url: string): string {
     return url.replace(/[\\`*_[\]()|]/g, '\\$&').replace(/[\r\n]/g, ' ');
 }

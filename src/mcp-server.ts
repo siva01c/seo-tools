@@ -20,6 +20,14 @@ const CORS_ORIGINS = (process.env.SEO_CORS_ORIGINS ?? '')
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
+// Central Mail API used by sendSeoEmail(). All three are required to send report emails —
+// deliberately no defaults, so a misconfigured deploy fails loudly instead of silently posting
+// to some other host or sending from an unintended address.
+const MAIL_API_URL = process.env.MAIL_API_URL ?? '';
+const MAIL_API_TOKEN = process.env.MAIL_API_TOKEN ?? '';
+const SMTP_FROM = process.env.SMTP_FROM ?? '';
+// Optional blind copy of every report email. Unset = no copy is taken.
+const SEO_BCC_EMAIL = process.env.SEO_BCC_EMAIL ?? '';
 const MAX_CONCURRENT_CRAWLS = parseInt(process.env.SEO_MAX_CONCURRENT_CRAWLS ?? '2', 10);
 const CRAWL_RATE_LIMIT_PER_HOUR = parseInt(process.env.SEO_CRAWL_RATE_LIMIT ?? '5', 10);
 // Status/report reads are polled frequently by legitimate clients, so this is looser than
@@ -573,7 +581,7 @@ function getMarekSystemPrompt(domain?: string): string {
                         // site could embed instruction-like text aimed at an LLM reading this
                         // prompt. This delimiter doesn't prevent prompt injection outright, but it
                         // gives the model an explicit boundary: everything below is untrusted
-                        // crawl data, not an instruction from the operator (see docs/todo.md A4).
+                        // crawl data, not an instruction from the operator (see internal backlog A4).
                         combined +=
                             `\n\n## Context for domain ${domain} (Latest crawl on ${latest}):\n\n` +
                             `<!-- BEGIN UNTRUSTED CRAWLED REPORT DATA. This section was generated ` +
@@ -877,11 +885,18 @@ async function sendSeoEmail(
     domain: string,
     attachment: IReportAttachment
 ): Promise<void> {
-    const mailApiUrl =
-        process.env.MAIL_API_URL ?? 'http://sales-assistant-assistant-1:8000/api/mail/send';
-    const mailApiToken = process.env.MAIL_API_TOKEN ?? '';
-    const smtpFrom = process.env.SMTP_FROM ?? 'seo@ludekkvapil.cz';
-    const bccEmail = process.env.SEO_BCC_EMAIL ?? 'seo@ludekkvapil.cz';
+    const missing = [
+        ['MAIL_API_URL', MAIL_API_URL],
+        ['MAIL_API_TOKEN', MAIL_API_TOKEN],
+        ['SMTP_FROM', SMTP_FROM],
+    ]
+        .filter(([, value]) => !value)
+        .map(([name]) => name);
+    if (missing.length > 0) {
+        const msg = `Mail API is not configured — set ${missing.join(', ')} in .env`;
+        console.error(`[mcp-server] ${msg}`);
+        throw new Error(msg);
+    }
 
     if (!toEmail) {
         console.error('[mcp-server] Missing recipient.');
@@ -904,18 +919,24 @@ async function sendSeoEmail(
     const subject = `SEO Audit Report pro doménu: ${domain}`;
     const body = `Dobrý den,\n\nv příloze Vám zasíláme vygenerovaný SEO Audit Report pro doménu: ${domain}.\n\nS pozdravem,\nRobot Luďka Kvapila`;
 
-    const response = await fetch(mailApiUrl, {
+    // No BCC configured, or the recipient is the BCC address itself → don't take a copy.
+    const bccEmails =
+        !SEO_BCC_EMAIL || toEmail.trim().toLowerCase() === SEO_BCC_EMAIL.toLowerCase()
+            ? []
+            : [SEO_BCC_EMAIL];
+
+    const response = await fetch(MAIL_API_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${mailApiToken}`,
+            Authorization: `Bearer ${MAIL_API_TOKEN}`,
         },
         body: JSON.stringify({
             to_email: toEmail,
             subject: subject,
             body: body,
-            from_email: smtpFrom,
-            bcc_emails: toEmail.trim().toLowerCase() === bccEmail.toLowerCase() ? [] : [bccEmail],
+            from_email: SMTP_FROM,
+            bcc_emails: bccEmails,
             attachments: [
                 {
                     content: attachment.content.toString('base64'),
@@ -949,7 +970,7 @@ function corsHeaders(req: http.IncomingMessage): Record<string, string> {
 
 // Baseline security headers applied to every response: no MIME sniffing, no third-party
 // framing, no referrer leakage. CSP is intentionally loose (no default-src 'self') because
-// FRONTEND_DIR is mounted from an external, unaudited build (see docs/todo.md open question
+// FRONTEND_DIR is mounted from an external, unaudited build (see internal backlog open question
 // on frontend location) — object-src/base-uri/frame-ancestors are the safe-everywhere subset
 // ASVS 3.4.3 requires as the minimum global policy regardless of that tradeoff.
 const SECURITY_HEADERS: Record<string, string> = {
@@ -1440,6 +1461,15 @@ if (SEO_MCP_TOKEN && SEO_MCP_TOKEN.length < 32) {
         process.exit(1);
     }
     console.warn(msg);
+}
+
+// Emailing reports is optional (the crawl/report endpoints work without it), so a missing mail
+// config is a warning rather than a fatal — but warn at boot instead of only at the first send.
+if (!MAIL_API_URL || !MAIL_API_TOKEN || !SMTP_FROM) {
+    console.warn(
+        '[mcp-server] Mail API not configured (MAIL_API_URL, MAIL_API_TOKEN, SMTP_FROM) — ' +
+            'report emails will fail. Crawling and report retrieval are unaffected.'
+    );
 }
 
 // Don't bind a socket when imported by the test suite
