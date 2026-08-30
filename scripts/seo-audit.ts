@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, langSuffix, ISeoAuditMessages } from './i18n.js';
-import { isHtmlPage } from './page-records.js';
+import { isHtmlPage, resolveSnapshotMode } from './page-records.js';
 import { parseKeywordPositions, IKeywordPosition } from './parse-keyword-positions.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -1038,6 +1038,7 @@ const args = process.argv.slice(2);
 const domain = getArg(args, 'domain');
 const dateArg = getArg(args, 'date');
 const outputArg = getArg(args, 'output');
+const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the historical union
 const lang = resolveLang(getArg(args, 'language') ?? getArg(args, 'lang'));
 // Translated message bundle for this run; analyzePage/renderMarkdown close over it.
 const m = messages[lang].seoAudit;
@@ -1062,11 +1063,23 @@ const main = (): void => {
         process.exit(1);
     }
 
-    // If specific date given, use only that; otherwise use all available dates
-    const datesToLoad = dateArg ? [dateArg] : allDates;
+    // An explicit --date wins. Otherwise audit the newest crawl only: loading every date
+    // unions in URLs that were retired long ago, so the audit describes a site state that no
+    // longer exists (long-fixed 404s, missing schema on pages that are now redirects).
+    // --all-crawls restores the historical union deliberately.
+    const datesToLoad = dateArg
+        ? [dateArg]
+        : snapshotMode === 'all'
+          ? allDates
+          : [allDates[allDates.length - 1]];
 
     console.log(`🔍 Domain: ${domain}`);
     console.log(`📅 Dates to analyze: ${datesToLoad.join(', ')}`);
+    if (!dateArg && snapshotMode === 'latest' && allDates.length > 1) {
+        console.log(
+            `   ⚠ ${allDates.length - 1} older crawl(s) excluded → use --all-crawls to include them`
+        );
+    }
 
     try {
         const allPages = loadAllPages(domain, datesToLoad);
@@ -1102,7 +1115,13 @@ const main = (): void => {
             keywordPositions
         );
 
-        const dateLabel = dateArg ?? `all-${allDates.length}-crawls`;
+        // `all-N-crawls` only when the union was actually audited — otherwise the filename
+        // would claim a scope the report does not have.
+        const dateLabel =
+            dateArg ??
+            (snapshotMode === 'all'
+                ? `all-${allDates.length}-crawls`
+                : allDates[allDates.length - 1]);
         // One folder per domain: storage/reports/<domain>/<date>/ (matches the other report
         // scripts). allDates is sorted ascending, so the last entry is the latest crawl.
         const folderDate = dateArg ?? allDates[allDates.length - 1];

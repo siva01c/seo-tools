@@ -3,7 +3,13 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
-import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
+import {
+    dedupePagesByUrl,
+    ddmmyyyyToSortKey,
+    isHtmlPage,
+    resolveSnapshotMode,
+    selectSnapshot,
+} from './page-records.js';
 import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
 import {
     findIncompleteOpenGraph,
@@ -56,7 +62,9 @@ const domainArg = getArg('domain');
 const outputDirArg = getArg('output-dir');
 const csvFlag = args.some(a => a === '--csv');
 const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the historical union
 const mi = messages[lang].seoIssues;
+const ms = messages[lang].snapshot;
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -92,10 +100,7 @@ const getLatestDatasetDate = (domain: string): string => {
     if (!existsSync(dir)) return dateStamp;
     const dates = readdirSync(dir)
         .filter(d => /^\d{2}-\d{2}-\d{4}$/.test(d))
-        .sort((a, b) => {
-            const iso = (d: string) => `${d.slice(6)}-${d.slice(3, 5)}-${d.slice(0, 2)}`;
-            return iso(a).localeCompare(iso(b));
-        });
+        .sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b)));
     return dates.length ? dates[dates.length - 1] : dateStamp;
 };
 
@@ -162,7 +167,11 @@ for (const domain of domainsToProcess) {
         .map(line => JSON.parse(line) as Page);
     // Latest crawl of each URL only, HTML pages only — feeds and other XML
     // resources have no titles/meta/H1/JSON-LD and would be flagged on every check.
-    allPages.push(...dedupePagesByUrl(pages).filter(isHtmlPage));
+    // Then the latest crawl's URLs only: a URL retired since an older crawl keeps its old
+    // record forever, so without this the report re-raises issues fixed months ago.
+    const deduped = dedupePagesByUrl(pages).filter(isHtmlPage);
+    const { selected } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    allPages.push(...selected);
 }
 
 if (allPages.length === 0) {

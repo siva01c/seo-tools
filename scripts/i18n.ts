@@ -41,6 +41,7 @@ export interface ISeoAuditMessages {
     reportTitle: string;
     metaCrawlDates: string;
     metaGenerated: string;
+    metaGeneratedVia: string;
     metaUniquePages: string;
 
     // Section headings (numbers are added by the renderer)
@@ -343,7 +344,22 @@ export interface ITitleDescriptionFixesMessages {
     sumWritten: string;
 }
 
+/**
+ * Shared across every report script: how the crawl slice being reported on is announced.
+ * Reports describe the newest crawl by default, so they must say which crawl that was and
+ * what was left out — otherwise a stale finding is indistinguishable from a current one.
+ */
+export interface ISnapshotMessages {
+    header: string;
+    pages: string;
+    staleExcluded: string;
+    staleHint: string;
+    allCrawlsHeader: string;
+    staleSectionTitle: string;
+}
+
 export interface IMessages {
+    snapshot: ISnapshotMessages;
     seoAudit: ISeoAuditMessages;
     seoIssues: ISeoIssuesMessages;
     report404: IReport404Messages;
@@ -355,10 +371,19 @@ export interface IMessages {
 // ── English ────────────────────────────────────────────────────────────────────
 
 const en: IMessages = {
+    snapshot: {
+        header: 'snapshot',
+        pages: 'pages',
+        staleExcluded: 'URL(s) excluded — not seen in the latest crawl, last seen',
+        staleHint: 'use --all-crawls to include every crawl ever recorded',
+        allCrawlsHeader: 'all crawls (--all-crawls)',
+        staleSectionTitle: 'stale_not_in_latest_crawl',
+    },
     seoAudit: {
         reportTitle: 'SEO Audit Report',
         metaCrawlDates: 'Crawl dates analyzed',
         metaGenerated: 'Generated',
+        metaGeneratedVia: 'Generated via',
         metaUniquePages: 'Unique pages analyzed',
         sExecSummary: 'Executive Summary',
         sScope: 'Scope',
@@ -617,6 +642,8 @@ const en: IMessages = {
             'ref_title',
             'link_text',
             'crawl_date',
+            'snapshot',
+            'last_seen',
         ],
         discLinkedFrom: 'linked_from_page',
         discSeeded: 'seeded_or_sitemap',
@@ -665,10 +692,19 @@ const en: IMessages = {
 // ── Czech ────────────────────────────────────────────────────────────────────
 
 const cs: IMessages = {
+    snapshot: {
+        header: 'snímek',
+        pages: 'stránek',
+        staleExcluded: 'URL vynecháno — v posledním crawlu nenalezeno, poslední výskyt',
+        staleHint: 'historii všech crawlů zahrneš přes --all-crawls',
+        allCrawlsHeader: 'všechny crawly (--all-crawls)',
+        staleSectionTitle: 'stale_not_in_latest_crawl',
+    },
     seoAudit: {
         reportTitle: 'SEO audit',
         metaCrawlDates: 'Analyzované dny crawlu',
         metaGenerated: 'Vygenerováno',
+        metaGeneratedVia: 'Vygenerováno pomocí',
         metaUniquePages: 'Počet unikátních stránek',
         sExecSummary: 'Manažerské shrnutí',
         sScope: 'Rozsah auditu',
@@ -940,6 +976,8 @@ const cs: IMessages = {
             'titulek_odkazujici',
             'text_odkazu',
             'datum_crawlu',
+            'snimek',
+            'naposledy_videno',
         ],
         discLinkedFrom: 'linked_from_page',
         discSeeded: 'seeded_or_sitemap',
