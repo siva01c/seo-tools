@@ -102,6 +102,20 @@ Options:
   --incremental                      Enable incremental crawling mode
   --incremental-date <DD-MM-YYYY>    Previous crawl date for incremental comparison
   --rate-limit=<preset|N/H>          Rate limiting preset or "requests/hours"
+  --max-requests=<N>                 Hard cap on pages crawled
+  --concurrency=<N>                  Max parallel page loads (default 2 from crawler.yml)
+  --delay-min=<ms>                   Min pause after each page (default 50)
+  --delay-max=<ms>                   Max pause after each page (default 200)
+  --max-retries=<N>                  Crawlee maxRequestRetries (default 3 = 4 attempts)
+  --block-assets                     Skip CSS/images/fonts/JS — ~1 request per page
+  --ignore-robots                    Disable robots.txt enforcement (authorized crawls only)
+  --date-folder, --date <DD-MM-YYYY> Write into a specific date folder
+
+Low-load crawling of third-party sites:
+  Prefer --concurrency/--delay-min/--delay-max/--block-assets over --rate-limit.
+  The rate limiter sleeps *inside* the request handler, which Crawlee bounds by
+  requestHandlerTimeoutSecs (60s). Any throttle longer than that aborts the handler
+  as a timeout and gets retried, increasing load instead of reducing it.
 
 Rate Limiting Presets:
   conservative   100 req/hour

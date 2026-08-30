@@ -1,5 +1,5 @@
 // For more information, see https://crawlee.dev/
-import { PlaywrightCrawler, type RequestOptions } from 'crawlee';
+import { PlaywrightCrawler, playwrightUtils, type RequestOptions } from 'crawlee';
 import { Actor } from 'apify';
 import { ConfigService } from './services/config/configService.js';
 import { ApifyConfigService } from './services/config/apifyConfig.js';
@@ -159,6 +159,37 @@ if (maxRequestsArg) {
         );
     }
 }
+
+// Parse a positive-integer flag of the form --name=<N>. Shared by the load-shaping flags below,
+// which all reject non-numeric and out-of-range values the same way --max-requests does.
+const parseIntFlag = (flagName: string, minValue: number): number | null => {
+    const arg = args.find(a => a.startsWith(`--${flagName}=`));
+    if (!arg) {
+        return null;
+    }
+    const raw = arg.split('=')[1];
+    const parsed = parseInt(raw, 10);
+    if (Number.isFinite(parsed) && parsed >= minValue) {
+        return parsed;
+    }
+    console.warn(
+        `⚠️ Invalid --${flagName} value: ${raw}. Must be an integer >= ${minValue}. Ignoring.`
+    );
+    return null;
+};
+
+// Load-shaping flags. These override config/crawler.yml for a single run so a deliberately gentle
+// crawl of a third-party site does not require editing the shared config. All are optional —
+// omitting them leaves the YAML defaults untouched.
+const commandLineConcurrency = parseIntFlag('concurrency', 1);
+const commandLineDelayMin = parseIntFlag('delay-min', 0);
+const commandLineDelayMax = parseIntFlag('delay-max', 0);
+const commandLineMaxRetries = parseIntFlag('max-retries', 0);
+
+// Parse --block-assets flag (skips CSS/images/fonts/JS subresources during navigation).
+// Without it every page navigation is a full browser load of every asset the page references,
+// which multiplies the request count seen by the target server.
+const commandLineBlockAssets = args.includes('--block-assets');
 
 // Parse HTML sitemap URL from command line (--html-sitemap-url <URL>)
 const htmlSitemapUrlIndex = args.findIndex(arg => arg === '--html-sitemap-url');
@@ -517,6 +548,28 @@ if (commandLineRateLimit) {
 if (commandLineMaxRequests !== null) {
     config.crawler.maxRequestsPerCrawl = commandLineMaxRequests;
     console.log(`📊 Max requests per crawl capped via command line: ${commandLineMaxRequests}`);
+}
+
+// Override load-shaping settings with command line values if provided. getRandomDelay() and the
+// delay guard in the request handler both read config.crawler.* at call time, so overriding the
+// config here is enough — no need to touch either of them.
+if (commandLineConcurrency !== null) {
+    config.crawler.maxConcurrency = commandLineConcurrency;
+    console.log(`🔄 Concurrency overridden via command line: ${commandLineConcurrency}`);
+}
+if (commandLineDelayMin !== null) {
+    config.crawler.requestDelayMin = commandLineDelayMin;
+    console.log(`💤 Min request delay overridden via command line: ${commandLineDelayMin}ms`);
+}
+if (commandLineDelayMax !== null) {
+    config.crawler.requestDelayMax = commandLineDelayMax;
+    console.log(`💤 Max request delay overridden via command line: ${commandLineDelayMax}ms`);
+}
+if (commandLineMaxRetries !== null) {
+    console.log(`🔁 Max request retries overridden via command line: ${commandLineMaxRetries}`);
+}
+if (commandLineBlockAssets) {
+    console.log(`🚫 Asset blocking enabled — CSS, images, fonts and JS will not be fetched`);
 }
 
 // Get base domain for rate limiting and link categorization
@@ -1334,6 +1387,25 @@ const ssrfPreNavigationHook = async (crawlingContext: {
     }
 };
 
+// Blocks subresource loads when --block-assets is set. Crawlee's blockRequests never blocks the
+// main document or its redirects, so the HTML the extractors read is unaffected — only the assets
+// the page references are skipped. That turns one page navigation into roughly one request to the
+// origin instead of one per referenced asset. Note this also blocks .js, so JS-rendered content
+// will not appear; server-rendered markup (title, meta, canonical, JSON-LD, links) still does.
+const blockAssetsPreNavigationHook = async (crawlingContext: {
+    page: { route: unknown };
+}): Promise<void> => {
+    await playwrightUtils.blockRequests(crawlingContext.page as never, {
+        extraUrlPatterns: ['.js', '.woff2', '.ico', '.mp4', '.webm', '.webp', '.avif'],
+    });
+};
+
+// Hooks shared by the main crawler and both retry crawlers, in navigation order.
+const commonPreNavigationHooks = [
+    ssrfPreNavigationHook,
+    ...(commandLineBlockAssets ? [blockAssetsPreNavigationHook] : []),
+];
+
 // Use the failedRequestHandler to handle failed requests.
 const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
     const currentUrl = request.loadedUrl ?? request.url;
@@ -1381,6 +1453,7 @@ const failedRequestHandler = async ({ request, error }: any): Promise<void> => {
 const crawler = new PlaywrightCrawler({
     maxRequestsPerCrawl: config.crawler.maxRequestsPerCrawl || undefined,
     maxConcurrency: config.crawler.maxConcurrency,
+    maxRequestRetries: commandLineMaxRetries ?? undefined,
     requestHandlerTimeoutSecs: config.crawler.requestTimeoutSecs,
     headless: config.crawler.headless,
 
@@ -1395,7 +1468,7 @@ const crawler = new PlaywrightCrawler({
 
     // Enhanced fingerprinting and headers
     preNavigationHooks: [
-        ssrfPreNavigationHook,
+        ...commonPreNavigationHooks,
         async (crawlingContext, _gotoOptions): Promise<void> => {
             const { page, request } = crawlingContext;
 
@@ -1741,6 +1814,7 @@ try {
         const retrycrawler = new PlaywrightCrawler({
             maxRequestsPerCrawl: config.crawler.maxRequestsPerCrawl ?? undefined,
             maxConcurrency: config.crawler.maxConcurrency,
+            maxRequestRetries: commandLineMaxRetries ?? undefined,
             requestHandlerTimeoutSecs: config.crawler.requestTimeoutSecs,
             headless: false, // Force visible browser
 
@@ -1756,7 +1830,7 @@ try {
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
-                ssrfPreNavigationHook,
+                ...commonPreNavigationHooks,
                 async (crawlingContext, _gotoOptions): Promise<void> => {
                     const { page } = crawlingContext;
                     await page.setViewportSize({ width: 1920, height: 1080 });
@@ -1883,6 +1957,7 @@ try {
         const retrycrawler = new PlaywrightCrawler({
             maxRequestsPerCrawl: config.crawler.maxRequestsPerCrawl ?? undefined,
             maxConcurrency: config.crawler.maxConcurrency,
+            maxRequestRetries: commandLineMaxRetries ?? undefined,
             requestHandlerTimeoutSecs: config.crawler.requestTimeoutSecs,
             headless: false, // Force visible browser
 
@@ -1898,7 +1973,7 @@ try {
 
             // Enhanced fingerprinting and headers
             preNavigationHooks: [
-                ssrfPreNavigationHook,
+                ...commonPreNavigationHooks,
                 async (crawlingContext, _gotoOptions): Promise<void> => {
                     const { page } = crawlingContext;
                     await page.setViewportSize({ width: 1920, height: 1080 });
