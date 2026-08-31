@@ -2,11 +2,13 @@
 // per-domain JSONL datasets.
 
 import type { ISnapshotMessages } from './i18n.js';
+import type { CrawlMode } from '../src/services/crawlManifest.js';
 
 type CrawledPage = {
     url?: string;
     response?: { status?: number; headers?: Record<string, string> };
-    _metadata?: { crawlDate?: string };
+    /** `crawlMode` is stamped at merge time from each date folder's `_crawl-meta.json`. */
+    _metadata?: { crawlDate?: string; crawlMode?: CrawlMode };
 };
 
 /** Turn a DD-MM-YYYY crawl date into a lexicographically sortable YYYY-MM-DD key. */
@@ -59,13 +61,36 @@ export type SnapshotMode = 'latest' | 'all';
 export type CrawlSnapshot<T> = {
     /** Newest crawl date found in the input, or undefined if no record carries one. */
     latestDate?: string;
-    /** Records from the newest crawl — the site as it actually looked last time we looked. */
+    /**
+     * The full crawl the snapshot is anchored on — equal to `latestDate` for an ordinary crawl,
+     * older when incremental crawls have been layered on top of it since.
+     */
+    baselineDate?: string;
+    /** Incremental crawl dates included on top of the baseline, oldest first. */
+    incrementalDates: string[];
+    /** Records from the current snapshot — the site as it actually looked last time we looked. */
     current: T[];
-    /** Records for URLs the newest crawl did not visit at all (retired, unlinked, or missed). */
+    /** Records for URLs the current snapshot does not cover (retired, unlinked, or missed). */
     stale: T[];
     /** Oldest and newest `crawlDate` among the stale records, for reporting. */
     staleDateRange?: { from: string; to: string };
 };
+
+/**
+ * Map each crawl date in a record set to the mode its crawl ran in.
+ * A date is incremental only if its records say so; anything unmarked is a full crawl (see
+ * `readCrawlMode` — datasets merged before the manifest existed carry no mode at all).
+ */
+function crawlModesByDate(pages: CrawledPage[]): Map<string, CrawlMode> {
+    const modes = new Map<string, CrawlMode>();
+    for (const page of pages) {
+        const date = page._metadata?.crawlDate;
+        if (!date) continue;
+        if (page._metadata?.crawlMode === 'incremental') modes.set(date, 'incremental');
+        else if (!modes.has(date)) modes.set(date, 'full');
+    }
+    return modes;
+}
 
 /**
  * Split deduplicated records into the newest crawl's snapshot and everything left over.
@@ -77,18 +102,39 @@ export type CrawlSnapshot<T> = {
  * stopped existing long ago: 404s and missing-schema findings that were fixed by the very
  * redirect that removed the URL from the crawl.
  *
+ * The snapshot is anchored on the newest *full* crawl, not simply the newest date folder. An
+ * incremental crawl (`--incremental`) writes only the URLs it re-fetched, so its date folder is a
+ * delta: anchoring on it would push every page that did not happen to change into `stale` and
+ * shrink a 300-page report to the handful of URLs the delta touched. Anchoring on the last full
+ * crawl and layering every incremental crawl since on top of it reproduces what the site actually
+ * looked like — which is what an incremental crawl is for.
+ *
  * Records without a `crawlDate` count as current — datasets predate that field, and dropping
  * them would silently lose data rather than merely age it.
  */
 export function splitByCrawlSnapshot<T extends CrawledPage>(pages: T[]): CrawlSnapshot<T> {
     const latestDate = getLatestCrawlDate(pages);
-    if (!latestDate) return { latestDate: undefined, current: pages, stale: [] };
+    if (!latestDate) {
+        return { latestDate: undefined, incrementalDates: [], current: pages, stale: [] };
+    }
+
+    const modes = crawlModesByDate(pages);
+    const dates = [...modes.keys()].sort((a, b) =>
+        ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b))
+    );
+    // Newest full crawl. When every recorded crawl is incremental there is no complete snapshot to
+    // anchor on, so fall back to the oldest date — i.e. keep the union rather than invent a scope.
+    const baselineDate = [...dates].reverse().find(d => modes.get(d) === 'full') ?? dates[0];
+    const baselineKey = ddmmyyyyToSortKey(baselineDate);
+    const incrementalDates = dates.filter(
+        d => ddmmyyyyToSortKey(d) > baselineKey && modes.get(d) === 'incremental'
+    );
 
     const current: T[] = [];
     const stale: T[] = [];
     for (const page of pages) {
         const date = page._metadata?.crawlDate;
-        if (!date || date === latestDate) current.push(page);
+        if (!date || ddmmyyyyToSortKey(date) >= baselineKey) current.push(page);
         else stale.push(page);
     }
 
@@ -99,6 +145,8 @@ export function splitByCrawlSnapshot<T extends CrawledPage>(pages: T[]): CrawlSn
 
     return {
         latestDate,
+        baselineDate,
+        incrementalDates,
         current,
         stale,
         staleDateRange: staleKeys.length
@@ -116,6 +164,22 @@ export function resolveSnapshotMode(args: string[]): SnapshotMode {
 }
 
 /**
+ * The scope a report covers, in words. `28-08-2026` for an ordinary crawl; `12-08-2026 … 28-08-2026
+ * (+2 incremental)` once incremental crawls have been layered on the last full one, so the reader
+ * can see the report spans more than one date folder and why.
+ */
+export function describeSnapshotScope<T>(
+    snapshot: CrawlSnapshot<T>,
+    mode: SnapshotMode,
+    m: ISnapshotMessages
+): string {
+    if (mode === 'all') return m.allCrawlsHeader;
+    if (!snapshot.latestDate) return m.allCrawlsHeader;
+    if (!snapshot.incrementalDates.length) return snapshot.latestDate;
+    return `${snapshot.baselineDate} … ${snapshot.latestDate} (${m.plusIncremental(snapshot.incrementalDates.length)})`;
+}
+
+/**
  * Apply the snapshot mode and announce which slice of the dataset the report covers.
  * Every report script goes through here so the crawl date and the excluded stale URLs are
  * always stated — a number without its crawl date is what made the old reports misleading.
@@ -129,8 +193,9 @@ export function selectSnapshot<T extends CrawledPage>(
     const snapshot = splitByCrawlSnapshot(pages);
     const selected = mode === 'all' ? pages : snapshot.current;
 
-    const label = mode === 'all' ? m.allCrawlsHeader : (snapshot.latestDate ?? m.allCrawlsHeader);
-    console.log(`📄 ${domain} — ${m.header} ${label}: ${selected.length} ${m.pages}`);
+    console.log(
+        `📄 ${domain} — ${m.header} ${describeSnapshotScope(snapshot, mode, m)}: ${selected.length} ${m.pages}`
+    );
 
     if (mode === 'latest' && snapshot.stale.length > 0) {
         const range = snapshot.staleDateRange;

@@ -14,6 +14,7 @@ import { sitemapComparisonService, ISitemapUrl } from './services/sitemapCompari
 import { RateLimitingService, rateLimitPresets } from './services/rateLimitingService.js';
 import { storageService } from './services/storageService.js';
 import { UrlIndexService } from './services/urlIndexService.js';
+import { writeCrawlManifest } from './services/crawlManifest.js';
 import { isHomepage } from './utils/urlUtils.js';
 import { categorizeLinks } from './utils/linkUtils.js';
 import { globalUserAgentRotator } from './utils/userAgentRotator.js';
@@ -2038,6 +2039,18 @@ try {
         process.exit(1);
     }
 }
+
+// Record what this crawl covered next to the data it produced. Report scripts read it back (via
+// the merge step, which stamps it onto every record) to tell a full snapshot from an incremental
+// delta — without it, an incremental run's date folder looks like "the latest state of the site"
+// and every report silently shrinks to the handful of URLs the delta re-fetched.
+writeCrawlManifest(storageService.getStoragePath('datasets'), {
+    crawlDate: storageConfig.dateFolder,
+    mode: config.crawler.incrementalMode ? 'incremental' : 'full',
+    previousCrawlDate: config.crawler.incrementalConfig?.previousCrawlDate,
+    startUrls: config.targets.startUrls,
+    finishedAt: new Date().toISOString(),
+});
 
 // Display URL Index Summary
 console.log('\n📊 URL Index Summary:');
