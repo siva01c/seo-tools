@@ -525,6 +525,8 @@ function renderKeywordSection(keywords: IKeywordPosition[], m: ISeoAuditMessages
 function renderMarkdown(
     domain: string,
     dates: string[],
+    /** How the crawl scope was chosen — a saved audit must say which slice of the data it read. */
+    scope: string,
     pages: IPageRecord[],
     analyses: IPageAnalysis[],
     pdfPages: IPageRecord[],
@@ -705,6 +707,7 @@ function renderMarkdown(
     return `# ${m.reportTitle} — ${domain}
 
 **${m.metaCrawlDates}:** ${dates.join(', ')}
+**${m.metaGeneratedVia}:** ${scope}
 **${m.metaGenerated}:** ${new Date().toISOString().slice(0, 10)}
 **${m.metaUniquePages}:** ${total}
 
@@ -1058,6 +1061,7 @@ const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the hi
 const lang = resolveLang(getArg(args, 'language') ?? getArg(args, 'lang'));
 // Translated message bundle for this run; analyzePage/renderMarkdown close over it.
 const m = messages[lang].seoAudit;
+const ms = messages[lang].snapshot;
 
 const main = (): void => {
     if (!domain) {
@@ -1122,9 +1126,19 @@ const main = (): void => {
         }
 
         console.log('📝 Generating SEO audit report...');
+        // Stated in the report header: a saved audit that does not say which crawls it read is
+        // indistinguishable from one describing the site as it is today.
+        const scope = dateArg
+            ? `--date ${dateArg}`
+            : snapshotMode === 'all'
+              ? `--all-crawls (${allDates.length})`
+              : datesToLoad.length > 1
+                ? `${datesToLoad[0]} … ${datesToLoad[datesToLoad.length - 1]} (${ms.plusIncremental(datesToLoad.length - 1)})`
+                : datesToLoad[0];
         const markdown = renderMarkdown(
             domain,
             datesToLoad,
+            scope,
             pages,
             analyses,
             pdfPages,

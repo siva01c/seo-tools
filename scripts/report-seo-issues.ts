@@ -9,6 +9,9 @@ import {
     isHtmlPage,
     resolveSnapshotMode,
     selectSnapshot,
+    snapshotMeta,
+    ISnapshotMeta,
+    REPORT_SCHEMA_VERSION,
 } from './page-records.js';
 import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
 import {
@@ -92,21 +95,25 @@ const domainsToProcess = (() => {
     return readdirSync(storageRoot).filter(d => existsSync(toDomainFile(d)));
 })();
 
-const dateStamp = new Date().toISOString().slice(0, 10);
+const todayStamp = new Date().toISOString().slice(0, 10);
 
 // Latest crawl date (DD-MM-YYYY) for a domain, taken from its dataset date folders.
 const getLatestDatasetDate = (domain: string): string => {
     const dir = join(storageRoot, domain);
-    if (!existsSync(dir)) return dateStamp;
+    if (!existsSync(dir)) return todayStamp;
     const dates = readdirSync(dir)
         .filter(d => /^\d{2}-\d{2}-\d{4}$/.test(d))
         .sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b)));
-    return dates.length ? dates[dates.length - 1] : dateStamp;
+    return dates.length ? dates[dates.length - 1] : todayStamp;
 };
 
 // One folder per domain: storage/reports/<domain>/<date>/ — consistent with the other report
 // scripts. Aggregate runs (no --domain) collect under _all-domains/.
-const reportDate = domainArg ? getLatestDatasetDate(domainArg) : dateStamp;
+// The stamp is the *crawl* date, not today's: a filename dated today over months-old crawl data is
+// exactly the kind of stale-looking-current report the snapshot scoping is here to prevent. An
+// aggregate run spans several crawls and has no single date, so it falls back to today.
+const reportDate = domainArg ? getLatestDatasetDate(domainArg) : todayStamp;
+const dateStamp = reportDate;
 const reportsRoot =
     outputDirArg ?? join('./storage/reports', domainArg ?? '_all-domains', reportDate);
 mkdirSync(reportsRoot, { recursive: true });
@@ -115,9 +122,27 @@ mkdirSync(reportsRoot, { recursive: true });
 
 const csvEscape = (v: string | undefined): string => `"${(v ?? '').replace(/"/g, '""')}"`;
 
-const writeJson = (filename: string, data: unknown): void => {
+/** Which crawl each domain in this run was read from; filled in by the load loop below. */
+const crawlScope: (ISnapshotMeta & { domain: string })[] = [];
+
+// Every report carries the crawl it describes. Without it a saved report from a months-old crawl
+// is indistinguishable from one generated against today's site — the misleading-numbers problem
+// the snapshot scoping exists to solve.
+const writeJson = (filename: string, data: Record<string, unknown>): void => {
     const path = join(reportsRoot, withSuffix(filename, lang));
-    writeFileSync(path, JSON.stringify(data, null, 2));
+    writeFileSync(
+        path,
+        JSON.stringify(
+            {
+                schema_version: REPORT_SCHEMA_VERSION,
+                generated_at: new Date().toISOString(),
+                crawl_scope: crawlScope,
+                ...data,
+            },
+            null,
+            2
+        )
+    );
     console.log(`  ✅ ${path}`);
 };
 
@@ -170,7 +195,8 @@ for (const domain of domainsToProcess) {
     // Then the latest crawl's URLs only: a URL retired since an older crawl keeps its old
     // record forever, so without this the report re-raises issues fixed months ago.
     const deduped = dedupePagesByUrl(pages).filter(isHtmlPage);
-    const { selected } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    const { selected, snapshot } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    crawlScope.push({ domain, ...snapshotMeta(snapshot, snapshotMode, selected.length) });
     allPages.push(...selected);
 }
 

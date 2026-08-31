@@ -8,6 +8,9 @@ import {
     isHtmlPage,
     resolveSnapshotMode,
     selectSnapshot,
+    snapshotMeta,
+    ISnapshotMeta,
+    REPORT_SCHEMA_VERSION,
 } from './page-records.js';
 import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
 import {
@@ -65,21 +68,23 @@ const domainsToProcess = (() => {
     return readdirSync(storageRoot).filter(d => existsSync(toDomainFile(d)));
 })();
 
-const dateStamp = new Date().toISOString().slice(0, 10);
+const todayStamp = new Date().toISOString().slice(0, 10);
 
 const getLatestDatasetDate = (domain: string): string => {
     const dir = join(storageRoot, domain);
-    if (!existsSync(dir)) return dateStamp;
+    if (!existsSync(dir)) return todayStamp;
     const dates = readdirSync(dir)
         .filter(d => /^\d{2}-\d{2}-\d{4}$/.test(d))
         .sort((a, b) => {
             const iso = (d: string) => `${d.slice(6)}-${d.slice(3, 5)}-${d.slice(0, 2)}`;
             return iso(a).localeCompare(iso(b));
         });
-    return dates.length ? dates[dates.length - 1] : dateStamp;
+    return dates.length ? dates[dates.length - 1] : todayStamp;
 };
 
-const reportDate = domainArg ? getLatestDatasetDate(domainArg) : dateStamp;
+// Stamped with the crawl date, not today's — see report-seo-issues.ts for why.
+const reportDate = domainArg ? getLatestDatasetDate(domainArg) : todayStamp;
+const dateStamp = reportDate;
 const reportsRoot =
     outputDirArg ?? join('./storage/reports', domainArg ?? '_all-domains', reportDate);
 mkdirSync(reportsRoot, { recursive: true });
@@ -88,9 +93,25 @@ mkdirSync(reportsRoot, { recursive: true });
 
 const csvEscape = (v: string | undefined): string => `"${(v ?? '').replace(/"/g, '""')}"`;
 
-const writeJson = (filename: string, data: unknown): void => {
+/** Which crawl each domain in this run was read from; filled in by the load loop below. */
+const crawlScope: (ISnapshotMeta & { domain: string })[] = [];
+
+// Every report carries the crawl it describes — see report-seo-issues.ts.
+const writeJson = (filename: string, data: Record<string, unknown>): void => {
     const path = join(reportsRoot, withSuffix(filename, lang));
-    writeFileSync(path, JSON.stringify(data, null, 2));
+    writeFileSync(
+        path,
+        JSON.stringify(
+            {
+                schema_version: REPORT_SCHEMA_VERSION,
+                generated_at: new Date().toISOString(),
+                crawl_scope: crawlScope,
+                ...data,
+            },
+            null,
+            2
+        )
+    );
     console.log(`  ✅ ${path}`);
 };
 
@@ -119,7 +140,8 @@ for (const domain of domainsToProcess) {
     // Latest crawl only — a link graph built over retired URLs invents broken links and
     // orphans that no live page can reach (see selectSnapshot).
     const deduped = dedupePagesByUrl(pages).filter(isHtmlPage);
-    const { selected } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    const { selected, snapshot } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    crawlScope.push({ domain, ...snapshotMeta(snapshot, snapshotMode, selected.length) });
     allPages.push(...selected);
 }
 

@@ -180,6 +180,43 @@ export function describeSnapshotScope<T>(
 }
 
 /**
+ * Shape version stamped into every persisted report JSON. v1 was the unversioned pre-snapshot
+ * shape (the 404 report was a bare entry array); v2 wraps the findings in an object carrying the
+ * crawl scope. Bump it whenever the shape changes so downstream consumers can branch on it.
+ */
+export const REPORT_SCHEMA_VERSION = 2;
+
+/**
+ * The crawl-scope block every persisted report embeds, so a saved JSON/CSV always carries the
+ * crawl it describes. A number without its crawl date is what made the old reports misleading.
+ */
+export interface ISnapshotMeta {
+    snapshot_mode: SnapshotMode;
+    /** Newest crawl date in scope. */
+    crawl_date?: string;
+    /** Full crawl the snapshot is anchored on — differs from `crawl_date` only for incrementals. */
+    baseline_crawl_date?: string;
+    incremental_crawl_dates?: string[];
+    pages_analyzed: number;
+}
+
+export function snapshotMeta<T>(
+    snapshot: CrawlSnapshot<T>,
+    mode: SnapshotMode,
+    pagesAnalyzed: number
+): ISnapshotMeta {
+    return {
+        snapshot_mode: mode,
+        crawl_date: snapshot.latestDate,
+        baseline_crawl_date: snapshot.baselineDate,
+        incremental_crawl_dates: snapshot.incrementalDates.length
+            ? snapshot.incrementalDates
+            : undefined,
+        pages_analyzed: pagesAnalyzed,
+    };
+}
+
+/**
  * Apply the snapshot mode and announce which slice of the dataset the report covers.
  * Every report script goes through here so the crawl date and the excluded stale URLs are
  * always stated — a number without its crawl date is what made the old reports misleading.
