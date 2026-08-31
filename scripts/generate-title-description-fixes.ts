@@ -4,7 +4,12 @@ import 'dotenv/config';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
-import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
+import {
+    dedupePagesByUrl,
+    isHtmlPage,
+    resolveSnapshotMode,
+    selectSnapshot,
+} from './page-records.js';
 import {
     TITLE_MAX_PIXEL_WIDTH,
     META_DESCRIPTION_MAX_PIXEL_WIDTH,
@@ -54,7 +59,9 @@ const domainArg = getArg('domain');
 const outputDirArg = getArg('output-dir');
 const csvFlag = args.some(a => a === '--csv');
 const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the historical union
 const mi = messages[lang].titleDescriptionFixes;
+const ms = messages[lang].snapshot;
 
 if (!domainArg) {
     console.error('Usage: generate-title-description-fixes.ts --domain <domain> [--csv]');
@@ -135,7 +142,14 @@ const rawPages = readFileSync(filePath, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map(line => JSON.parse(line) as Page);
-const allPages = dedupePagesByUrl(rawPages).filter(isHtmlPage);
+// Latest crawl only — no point generating title/description fixes for URLs that no longer
+// exist on the site (see selectSnapshot).
+const { selected: allPages } = selectSnapshot(
+    domainArg,
+    dedupePagesByUrl(rawPages).filter(isHtmlPage),
+    snapshotMode,
+    ms
+);
 
 if (allPages.length === 0) {
     console.error('No pages loaded. Exiting.');

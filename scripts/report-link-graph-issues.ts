@@ -3,7 +3,12 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, withSuffix } from './i18n.js';
-import { dedupePagesByUrl, isHtmlPage } from './page-records.js';
+import {
+    dedupePagesByUrl,
+    isHtmlPage,
+    resolveSnapshotMode,
+    selectSnapshot,
+} from './page-records.js';
 import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
 import {
     findPagesLinkingToBrokenPages,
@@ -39,7 +44,9 @@ const domainArg = getArg('domain');
 const outputDirArg = getArg('output-dir');
 const csvFlag = args.some(a => a === '--csv');
 const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the historical union
 const mi = messages[lang].linkGraphIssues;
+const ms = messages[lang].snapshot;
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -109,7 +116,11 @@ for (const domain of domainsToProcess) {
         .split('\n')
         .filter(Boolean)
         .map(line => JSON.parse(line) as Page);
-    allPages.push(...dedupePagesByUrl(pages).filter(isHtmlPage));
+    // Latest crawl only — a link graph built over retired URLs invents broken links and
+    // orphans that no live page can reach (see selectSnapshot).
+    const deduped = dedupePagesByUrl(pages).filter(isHtmlPage);
+    const { selected } = selectSnapshot(domain, deduped, snapshotMode, ms);
+    allPages.push(...selected);
 }
 
 if (allPages.length === 0) {

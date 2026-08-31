@@ -385,6 +385,25 @@ also supporting `--csv`). Run any of them inside the `app` container.
 Czech. Czech output is written to a separate `…-cs.{md,json,csv}` file so both languages can
 coexist. Example: `… npm run seo-audit -- --domain example.com --language cs`.
 
+**Crawl scope — reports describe the _latest_ crawl, not the whole history.** `storage/datasets/`
+merges every crawl of a domain into one JSONL, so it accumulates the union of all URLs ever seen. A
+URL retired between crawls (now redirected, so nothing links to it and the crawler never reaches it
+again) keeps its last record forever. Reports therefore default to the newest crawl date and print
+how many stale URLs they excluded:
+
+```
+📄 example.com — snapshot 28-08-2026: 311 pages
+   ⚠ 47 URL(s) excluded — not seen in the latest crawl, last seen 19-07-2025 … 07-08-2026
+     → use --all-crawls to include every crawl ever recorded
+```
+
+Pass `--all-crawls` to any report (`report:404`, `report:seo-issues`, `report-link-graph-issues`,
+`generate-title-description-fixes`, `seo-audit`) to get the historical union instead — useful for
+"has this URL ever 404ed", misleading as a picture of the site today. `seo-audit --date DD-MM-YYYY`
+still pins one specific crawl. The 404 report additionally keeps its excluded findings in a
+`stale_not_in_latest_crawl` array (and a `snapshot`/`last_seen` column pair in the CSV), so a dead
+legacy URL is visible but never counted as a current issue without re-verification.
+
 ### SEO Audit — `seo-audit.ts`
 
 A comprehensive **Markdown** audit of a crawled site. Per page it checks indexability
@@ -396,7 +415,8 @@ Service, FAQ, Branch/Contact, …), and emits a prioritized recommendations tabl
 
 ```bash
 docker compose run --rm app npm run seo-audit -- --domain example.com
-# Options: --date DD-MM-YYYY (pick a crawl date), --output <file.md>
+# Options: --date DD-MM-YYYY (pick a crawl date), --all-crawls (union of every crawl),
+#          --output <file.md>
 # Output:  storage/reports/seo-audit-<domain>-<date>.md
 ```
 
@@ -428,7 +448,7 @@ truncates SERP snippets).
 
 ```bash
 docker compose run --rm app npm run report:seo-issues -- --domain example.com --csv
-# Options: --domain <d>, --output-dir <dir>, --csv
+# Options: --domain <d>, --output-dir <dir>, --csv, --all-crawls
 # Output:  per-issue JSON (and CSV with --csv) in storage/reports/
 ```
 
@@ -441,7 +461,7 @@ OpenAI-compatible client — point it at OpenAI or a local model (Ollama) throug
 
 ```bash
 docker compose run --rm app npx tsx scripts/generate-title-description-fixes.ts --domain example.com --csv
-# Options: --domain <d> (required), --output-dir <dir>, --csv, --language <cs|en>
+# Options: --domain <d> (required), --output-dir <dir>, --csv, --language <cs|en>, --all-crawls
 # Output:  storage/reports/<domain>/title-description-fixes-<date>.json (+ .csv)
 ```
 
@@ -455,7 +475,10 @@ new requests.
 ```bash
 docker compose run --rm app npm run report:404 -- --domain example.com --csv
 # --domain is optional (processes all crawled domains if omitted)
+# Options: --all-crawls (report every 404 ever seen, not just the latest crawl's)
 # Output:  storage/reports/<domain>/404-link-report-<date>.json (+ .csv with --csv)
+#          JSON shape: { domain, crawl_date, snapshot_mode, pages_analyzed, total,
+#                        entries: [...], stale_not_in_latest_crawl: [...] }
 ```
 
 ### Broken Link Validation — `check-broken-links.ts`
@@ -767,6 +790,28 @@ Options:
   --incremental                      Enable incremental crawling mode
   --incremental-date <date>          Previous crawl date (DD-MM-YYYY format)
   --rate-limit=<preset|format>       Rate limiting: preset name or "requests/hours"
+  --max-requests=<N>                 Hard cap on number of pages crawled
+  --concurrency=<N>                  Max parallel page loads (default 2 from crawler.yml)
+  --delay-min=<ms>                   Min pause after each page (default 50)
+  --delay-max=<ms>                   Max pause after each page (default 200)
+  --max-retries=<N>                  Crawlee maxRequestRetries (default 3 = 4 attempts)
+  --block-assets                     Skip CSS/images/fonts/JS subresources
+  --ignore-robots                    Disable robots.txt enforcement
+  --date-folder, --date <DD-MM-YYYY> Write into a specific date folder
+
+Low-load crawling of third-party sites:
+  Use --concurrency, --delay-min/--delay-max and --block-assets rather than
+  --rate-limit. Without --block-assets each page navigation is a full browser load
+  of every asset the page references, so one "request" in the crawl statistics can
+  be dozens of hits on the origin server. Example — a deliberately gentle crawl:
+
+    docker compose run --rm app npm run crawl -- https://example.com \
+      --headless=true --max-requests=50 --concurrency=1 \
+      --delay-min=4500 --delay-max=5500 --max-retries=1 --block-assets
+
+  Avoid --rate-limit for this: the limiter sleeps inside the request handler, which
+  Crawlee bounds by requestHandlerTimeoutSecs (60s), so a throttle longer than that
+  turns into a timeout plus retries — more load, not less.
 
 Rate Limiting Presets:
   conservative  - 100 requests per hour

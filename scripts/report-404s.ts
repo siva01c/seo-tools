@@ -3,7 +3,13 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { messages, resolveLang, langSuffix } from './i18n.js';
-import { dedupePagesByUrl } from './page-records.js';
+import {
+    dedupePagesByUrl,
+    ddmmyyyyToSortKey,
+    getLatestCrawlDate,
+    resolveSnapshotMode,
+    selectSnapshot,
+} from './page-records.js';
 import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
 import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
 
@@ -30,6 +36,8 @@ type ReportEntry = {
     timestamp?: string;
     discovery_source: 'linked_from_page' | 'seeded_or_sitemap';
     referrers: Referrer[];
+    /** Crawl that produced this record — differs from the report's crawl_date for stale entries. */
+    last_seen?: string;
 };
 
 const args = process.argv.slice(2);
@@ -46,7 +54,9 @@ const domainArg = getArg('domain'); // optional; if omitted processes all domain
 const outputArg = getArg('output'); // optional custom output file
 const csvFlag = args.some(a => a === '--csv'); // presence enables CSV output
 const lang = resolveLang(getArg('language') ?? getArg('lang'));
+const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the historical union
 const m4 = messages[lang].report404;
+const ms = messages[lang].snapshot;
 
 const storageRoot = './storage/datasets';
 const reportsRoot = './storage/reports';
@@ -78,11 +88,6 @@ const toDatasetDate = (value?: string): string => {
     return value;
 };
 
-const ddmmyyyyToSortKey = (date: string): string => {
-    const [dd, mm, yyyy] = date.split('-');
-    return `${yyyy}-${mm}-${dd}`;
-};
-
 const getLatestDatasetDate = (domain: string): string => {
     const domainPath = join(storageRoot, domain);
     const dateFolders = readdirSync(domainPath)
@@ -90,12 +95,6 @@ const getLatestDatasetDate = (domain: string): string => {
         .sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b)));
 
     return dateFolders.at(-1) ?? toDatasetDate(undefined);
-};
-
-const getLatestCrawlDate = (pages: Page[]): string | undefined => {
-    const dates = pages.map(p => p._metadata?.crawlDate).filter((d): d is string => !!d);
-    if (dates.length === 0) return undefined;
-    return dates.sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b))).at(-1);
 };
 
 // Ensure merged files exist for the domain(s) we need to process
@@ -138,13 +137,16 @@ for (const domain of domainsToProcess) {
     console.log(`🔍 Processing ${filePath}`);
     // Latest crawl of each URL only — a page that 404ed once but is fixed in a
     // newer crawl must not be reported from the stale record.
-    const pages: Page[] = dedupePagesByUrl(
+    const deduped: Page[] = dedupePagesByUrl(
         readFileSync(filePath, 'utf8')
             .trim()
             .split('\n')
             .filter(Boolean)
             .map(line => JSON.parse(line) as Page)
     );
+    // ...and the latest crawl's URLs only — a URL retired since an older crawl keeps its old
+    // record forever, so without this the report resurrects long-fixed 404s (see selectSnapshot).
+    const { selected: pages, snapshot } = selectSnapshot(domain, deduped, snapshotMode, ms);
     const reportDir = outputArg ? undefined : getReportDir(domain, pages);
     const pageCrawlDate = getLatestCrawlDate(pages);
     const dateStamp = pageCrawlDate ? toDatasetDate(pageCrawlDate) : getLatestDatasetDate(domain);
@@ -154,6 +156,7 @@ for (const domain of domainsToProcess) {
         ? outputArg.replace(/\.json$/, '.csv')
         : join(reportDir!, `404-link-report-${dateStamp}${langSuffix(lang)}.csv`);
     const domainEntries: ReportEntry[] = [];
+    const staleEntries: ReportEntry[] = [];
 
     if (reportDir) {
         ensureDir(reportDir);
@@ -174,58 +177,81 @@ for (const domain of domainsToProcess) {
         ])
     );
 
-    // Collect 404 pages
-    const notFoundPages = pages.filter(p => p.response?.status === 404);
-
-    for (const nf of notFoundPages) {
+    const toEntry = (nf: Page): ReportEntry => {
         const refs = refMap.get(nf.url) ?? [];
         // Drop self-references from error pages to reduce noise
         const filteredRefs = refs.filter(r => r.pageUrl !== nf.url);
-        domainEntries.push({
+        return {
             target: nf.url,
             status: nf.response?.status ?? 404,
             timestamp: nf.timestamp,
             discovery_source: filteredRefs.length > 0 ? 'linked_from_page' : 'seeded_or_sitemap',
             referrers: filteredRefs,
-        });
+            last_seen: nf._metadata?.crawlDate,
+        };
+    };
+
+    // Collect 404 pages
+    domainEntries.push(...pages.filter(p => p.response?.status === 404).map(toEntry));
+    // Stale 404s are reported separately, never mixed in: their status was true at `last_seen`
+    // but the URL has not been crawled since, so it may well have been redirected or removed.
+    if (snapshotMode === 'latest') {
+        staleEntries.push(...snapshot.stale.filter(p => p.response?.status === 404).map(toEntry));
     }
 
-    writeFileSync(defaultOutput, JSON.stringify(domainEntries, null, 2));
-    console.log(`✅ Wrote JSON report: ${defaultOutput} (${domainEntries.length} entries)`);
+    writeFileSync(
+        defaultOutput,
+        JSON.stringify(
+            {
+                domain,
+                crawl_date: snapshot.latestDate ?? dateStamp,
+                snapshot_mode: snapshotMode,
+                pages_analyzed: pages.length,
+                total: domainEntries.length,
+                entries: domainEntries,
+                [ms.staleSectionTitle]: staleEntries,
+            },
+            null,
+            2
+        )
+    );
+    console.log(
+        `✅ Wrote JSON report: ${defaultOutput} (${domainEntries.length} entries` +
+            (staleEntries.length ? `, ${staleEntries.length} stale` : '') +
+            ')'
+    );
 
     if (csvFlag) {
+        const csvRow = (values: (string | undefined)[]): string =>
+            values.map(v => `"${(v ?? '').replace(/"/g, '""')}"`).join(',');
         const rows = [m4.csvHeader.join(',')];
-        for (const entry of domainEntries) {
+        // Stale rows are carried in the CSV too, tagged in the `snapshot` column, so a
+        // spreadsheet reader can tell a current finding from an unverified historical one.
+        const tagged: [ReportEntry, string][] = [
+            ...domainEntries.map((e): [ReportEntry, string] => [e, 'latest']),
+            ...staleEntries.map((e): [ReportEntry, string] => [e, 'stale']),
+        ];
+        for (const [entry, snapshotTag] of tagged) {
+            const head = [
+                entry.target,
+                String(entry.status),
+                entry.timestamp ?? '',
+                entry.discovery_source,
+            ];
             if (entry.referrers.length === 0) {
-                rows.push(
-                    [
-                        entry.target,
-                        String(entry.status),
-                        entry.timestamp ?? '',
-                        entry.discovery_source,
-                        '',
-                        '',
-                        '',
-                        '',
-                    ]
-                        .map(v => `"${(v ?? '').replace(/"/g, '""')}"`)
-                        .join(',')
-                );
+                rows.push(csvRow([...head, '', '', '', '', snapshotTag, entry.last_seen ?? '']));
             } else {
                 for (const ref of entry.referrers) {
                     rows.push(
-                        [
-                            entry.target,
-                            String(entry.status),
-                            entry.timestamp ?? '',
-                            entry.discovery_source,
+                        csvRow([
+                            ...head,
                             ref.pageUrl ?? '',
                             ref.pageTitle ?? '',
                             ref.linkText ?? '',
                             ref.crawlDate ?? '',
-                        ]
-                            .map(v => `"${(v ?? '').replace(/"/g, '""')}"`)
-                            .join(',')
+                            snapshotTag,
+                            entry.last_seen ?? '',
+                        ])
                     );
                 }
             }
