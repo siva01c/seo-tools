@@ -1,5 +1,6 @@
 // For more information, see https://crawlee.dev/
-import { PlaywrightCrawler, playwrightUtils, type RequestOptions } from 'crawlee';
+import { PlaywrightCrawler, type RequestOptions } from 'crawlee';
+import type { Page } from 'playwright';
 import { Actor } from 'apify';
 import { ConfigService } from './services/config/configService.js';
 import { ApifyConfigService } from './services/config/apifyConfig.js';
@@ -14,7 +15,9 @@ import { sitemapComparisonService, ISitemapUrl } from './services/sitemapCompari
 import { RateLimitingService, rateLimitPresets } from './services/rateLimitingService.js';
 import { storageService } from './services/storageService.js';
 import { UrlIndexService } from './services/urlIndexService.js';
+import { writeCrawlManifest } from './services/crawlManifest.js';
 import { isHomepage } from './utils/urlUtils.js';
+import { normalizeDelayRange } from './utils/delayRange.js';
 import { categorizeLinks } from './utils/linkUtils.js';
 import { globalUserAgentRotator } from './utils/userAgentRotator.js';
 import {
@@ -564,6 +567,20 @@ if (commandLineDelayMin !== null) {
 if (commandLineDelayMax !== null) {
     config.crawler.requestDelayMax = commandLineDelayMax;
     console.log(`💤 Max request delay overridden via command line: ${commandLineDelayMax}ms`);
+}
+// Validate the *effective* pair, not just the flags that were passed: overriding only one side
+// can invert the range against the crawler.yml value for the other just as easily as passing both.
+{
+    const normalized = normalizeDelayRange(
+        config.crawler.requestDelayMin,
+        config.crawler.requestDelayMax,
+        config.crawler.requestTimeoutSecs
+    );
+    for (const warning of normalized.warnings) {
+        console.warn(`⚠️ ${warning}`);
+    }
+    config.crawler.requestDelayMin = normalized.min;
+    config.crawler.requestDelayMax = normalized.max;
 }
 if (commandLineMaxRetries !== null) {
     console.log(`🔁 Max request retries overridden via command line: ${commandLineMaxRetries}`);
@@ -1363,11 +1380,19 @@ const requestHandler = async ({
         }
     }
 
-    // Add random delay between requests
-    if (config.crawler.requestDelayMin && config.crawler.requestDelayMax) {
+    // Add random delay between requests. Tested with `!== undefined` rather than truthiness:
+    // `--delay-min=0` is a legitimate lower bound (e.g. 0–3000ms pacing) and a falsy check would
+    // read it as "no delay configured", disabling pacing entirely — the opposite of the flag's
+    // intent, and a heavier crawl than the crawler.yml default.
+    if (
+        config.crawler.requestDelayMin !== undefined &&
+        config.crawler.requestDelayMax !== undefined
+    ) {
         const delay = getRandomDelay();
-        console.log(`💤 Random delay: ${delay}ms before next request`);
-        await new Promise(resolve => setTimeout(resolve, delay));
+        if (delay > 0) {
+            console.log(`💤 Random delay: ${delay}ms before next request`);
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
     }
 };
 
@@ -1387,16 +1412,28 @@ const ssrfPreNavigationHook = async (crawlingContext: {
     }
 };
 
-// Blocks subresource loads when --block-assets is set. Crawlee's blockRequests never blocks the
-// main document or its redirects, so the HTML the extractors read is unaffected — only the assets
-// the page references are skipped. That turns one page navigation into roughly one request to the
-// origin instead of one per referenced asset. Note this also blocks .js, so JS-rendered content
-// will not appear; server-rendered markup (title, meta, canonical, JSON-LD, links) still does.
-const blockAssetsPreNavigationHook = async (crawlingContext: {
-    page: { route: unknown };
-}): Promise<void> => {
-    await playwrightUtils.blockRequests(crawlingContext.page as never, {
-        extraUrlPatterns: ['.js', '.woff2', '.ico', '.mp4', '.webm', '.webp', '.avif'],
+// Subresource kinds skipped when --block-assets is set. Filtering on the browser's own resource
+// type rather than on URL substrings is what makes this safe: crawlee's blockRequests() forwards
+// its patterns to CDP Network.setBlockedURLs, which matches substrings, so a pattern like '.js'
+// also swallows '.json' endpoints, '.jsp' subresources and any URL merely containing '.js' — a
+// page that loads its content over JSON would then be recorded as an empty 200 and flagged as
+// broken by every downstream SEO check. Resource types are classified by the browser, so a fetch
+// of a .json file is 'fetch'/'xhr' and passes through while a real script is blocked.
+const BLOCKED_RESOURCE_TYPES = new Set(['stylesheet', 'image', 'media', 'font', 'script']);
+
+// Never blocks the main document or its redirects, so the HTML the extractors read is unaffected —
+// only the assets the page references are skipped. That turns one page navigation into roughly one
+// request to the origin instead of one per referenced asset. Note this does block scripts, so
+// JS-rendered content will not appear; server-rendered markup (title, meta, canonical, JSON-LD,
+// links) still does.
+const blockAssetsPreNavigationHook = async (crawlingContext: { page: Page }): Promise<void> => {
+    await crawlingContext.page.route('**/*', async route => {
+        const request = route.request();
+        if (request.isNavigationRequest() || !BLOCKED_RESOURCE_TYPES.has(request.resourceType())) {
+            await route.continue();
+            return;
+        }
+        await route.abort();
     });
 };
 
@@ -2038,6 +2075,18 @@ try {
         process.exit(1);
     }
 }
+
+// Record what this crawl covered next to the data it produced. Report scripts read it back (via
+// the merge step, which stamps it onto every record) to tell a full snapshot from an incremental
+// delta — without it, an incremental run's date folder looks like "the latest state of the site"
+// and every report silently shrinks to the handful of URLs the delta re-fetched.
+writeCrawlManifest(storageService.getStoragePath('datasets'), {
+    crawlDate: storageConfig.dateFolder,
+    mode: config.crawler.incrementalMode ? 'incremental' : 'full',
+    previousCrawlDate: config.crawler.incrementalConfig?.previousCrawlDate,
+    startUrls: config.targets.startUrls,
+    finishedAt: new Date().toISOString(),
+});
 
 // Display URL Index Summary
 console.log('\n📊 URL Index Summary:');

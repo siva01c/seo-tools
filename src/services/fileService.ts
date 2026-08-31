@@ -1,5 +1,6 @@
 import { writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
+import { readCrawlMode } from './crawlManifest.js';
 
 export const mergeDatasetToJsonl = (
     storagePath = './storage/datasets',
@@ -49,6 +50,9 @@ export const mergeDatasetToJsonl = (
 
                 if (existsSync(jsonlFile)) {
                     console.log(`📁 Processing ${domainDir}/${dateFolder}/${domainFilename}.jsonl`);
+                    // Carried on every record so reports can tell a complete snapshot from an
+                    // incremental delta without re-reading the dataset tree.
+                    const crawlMode = readCrawlMode(dateFolderPath);
 
                     try {
                         const content = readFileSync(jsonlFile, 'utf8');
@@ -66,6 +70,7 @@ export const mergeDatasetToJsonl = (
                                     jsonData._metadata = {
                                         domain: domainDir,
                                         crawlDate: dateFolder,
+                                        crawlMode,
                                         sourceFile: `${domainDir}/${dateFolder}/${domainFilename}.jsonl`,
                                     };
                                     mergedContent += JSON.stringify(jsonData) + '\n';
@@ -156,12 +161,15 @@ export const mergeSingleDomain = (
 
             if (content.length === 0) continue;
 
+            // See mergeDatasetToJsonl — reports rely on crawlMode to skip incremental deltas.
+            const crawlMode = readCrawlMode(join(domainPath, dateFolder));
             const annotated = content.map(line => {
                 try {
                     const obj = JSON.parse(line);
                     obj._metadata = {
                         domain,
                         crawlDate: dateFolder,
+                        crawlMode,
                         sourceFile: sourceFile,
                     };
                     return JSON.stringify(obj);
@@ -236,12 +244,15 @@ export const mergeDomainsToIndividualJsonl = (
 
                 if (content.length === 0) continue;
 
+                // See mergeDatasetToJsonl — reports rely on crawlMode to skip incremental deltas.
+                const crawlMode = readCrawlMode(join(domainPath, dateFolder));
                 const annotated = content.map(line => {
                     try {
                         const obj = JSON.parse(line);
                         obj._metadata = {
                             domain: domainDir,
                             crawlDate: dateFolder,
+                            crawlMode,
                             sourceFile: sourceFile,
                         };
                         return JSON.stringify(obj);

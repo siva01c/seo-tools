@@ -404,6 +404,26 @@ still pins one specific crawl. The 404 report additionally keeps its excluded fi
 `stale_not_in_latest_crawl` array (and a `snapshot`/`last_seen` column pair in the CSV), so a dead
 legacy URL is visible but never counted as a current issue without re-verification.
 
+**Incremental crawls are handled as deltas, not snapshots.** A `--incremental` run writes only the
+URLs it re-fetched, so its date folder is not a picture of the site on its own — scoping a report to
+it would drop every page that happened not to change. Each crawl therefore records a
+`_crawl-meta.json` manifest in its date folder (`mode: full | incremental`), and reports anchor the
+snapshot on the **newest full crawl**, layering every incremental crawl since on top of it:
+
+```
+📄 example.com — snapshot 12-08-2026 … 28-08-2026 (+2 incremental crawls): 311 pages
+```
+
+Date folders crawled before the manifest existed carry no mode and count as full crawls, so existing
+datasets behave exactly as they did.
+
+**Report JSON carries its crawl scope.** Every persisted report JSON begins with `schema_version`,
+`generated_at` and the crawl(s) it was built from, and per-domain report filenames are stamped with
+the **crawl** date rather than today's — a saved report from a months-old crawl must not look
+current. `schema_version` is `2`; version 1 was the unversioned pre-snapshot shape (the 404 report
+was a bare `ReportEntry[]` array rather than an object), so any external consumer reading
+`404-link-report-*.json` as an array needs updating to read `.entries`.
+
 ### SEO Audit — `seo-audit.ts`
 
 A comprehensive **Markdown** audit of a crawled site. Per page it checks indexability
@@ -477,8 +497,10 @@ docker compose run --rm app npm run report:404 -- --domain example.com --csv
 # --domain is optional (processes all crawled domains if omitted)
 # Options: --all-crawls (report every 404 ever seen, not just the latest crawl's)
 # Output:  storage/reports/<domain>/404-link-report-<date>.json (+ .csv with --csv)
-#          JSON shape: { domain, crawl_date, snapshot_mode, pages_analyzed, total,
+#          JSON shape: { schema_version: 2, domain, crawl_date, baseline_crawl_date,
+#                        incremental_crawl_dates, snapshot_mode, pages_analyzed, total,
 #                        entries: [...], stale_not_in_latest_crawl: [...] }
+#          Breaking vs. schema_version 1: the file was a bare array of entries.
 ```
 
 ### Broken Link Validation — `check-broken-links.ts`
@@ -792,7 +814,7 @@ Options:
   --rate-limit=<preset|format>       Rate limiting: preset name or "requests/hours"
   --max-requests=<N>                 Hard cap on number of pages crawled
   --concurrency=<N>                  Max parallel page loads (default 2 from crawler.yml)
-  --delay-min=<ms>                   Min pause after each page (default 50)
+  --delay-min=<ms>                   Min pause after each page (default 50; 0 is valid)
   --delay-max=<ms>                   Max pause after each page (default 200)
   --max-retries=<N>                  Crawlee maxRequestRetries (default 3 = 4 attempts)
   --block-assets                     Skip CSS/images/fonts/JS subresources
@@ -811,7 +833,13 @@ Low-load crawling of third-party sites:
 
   Avoid --rate-limit for this: the limiter sleeps inside the request handler, which
   Crawlee bounds by requestHandlerTimeoutSecs (60s), so a throttle longer than that
-  turns into a timeout plus retries — more load, not less.
+  turns into a timeout plus retries — more load, not less. The inter-request delay
+  sleeps in the same place, so the two bounds are validated against each other and
+  against that timeout: an inverted pair (min > max, including against the crawler.yml
+  value when only one side is overridden) is swapped with a warning, and a delay above
+  half the handler timeout is clamped. --block-assets filters by the browser's own
+  resource type (stylesheet/image/media/font/script), so JSON/XHR responses the page
+  fetches are never blocked.
 
 Rate Limiting Presets:
   conservative  - 100 requests per hour

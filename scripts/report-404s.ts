@@ -9,6 +9,8 @@ import {
     getLatestCrawlDate,
     resolveSnapshotMode,
     selectSnapshot,
+    snapshotMeta,
+    REPORT_SCHEMA_VERSION,
 } from './page-records.js';
 import { buildReverseLinkGraph } from '../src/services/linkGraphService.js';
 import { mergeSingleDomain, mergeDomainsToIndividualJsonl } from '../src/services/fileService.js';
@@ -203,10 +205,12 @@ for (const domain of domainsToProcess) {
         defaultOutput,
         JSON.stringify(
             {
+                // v1 was a bare ReportEntry[]; v2 wraps it so the crawl scope travels with the
+                // findings. Bump this whenever the shape changes so consumers can tell.
+                schema_version: REPORT_SCHEMA_VERSION,
                 domain,
+                ...snapshotMeta(snapshot, snapshotMode, pages.length),
                 crawl_date: snapshot.latestDate ?? dateStamp,
-                snapshot_mode: snapshotMode,
-                pages_analyzed: pages.length,
                 total: domainEntries.length,
                 entries: domainEntries,
                 [ms.staleSectionTitle]: staleEntries,

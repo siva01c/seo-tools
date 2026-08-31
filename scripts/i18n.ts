@@ -356,6 +356,8 @@ export interface ISnapshotMessages {
     staleHint: string;
     allCrawlsHeader: string;
     staleSectionTitle: string;
+    /** Suffix shown when incremental crawls are layered on top of the baseline full crawl. */
+    plusIncremental: (count: number) => string;
 }
 
 export interface IMessages {
@@ -378,6 +380,7 @@ const en: IMessages = {
         staleHint: 'use --all-crawls to include every crawl ever recorded',
         allCrawlsHeader: 'all crawls (--all-crawls)',
         staleSectionTitle: 'stale_not_in_latest_crawl',
+        plusIncremental: n => `+${n} incremental crawl${n === 1 ? '' : 's'}`,
     },
     seoAudit: {
         reportTitle: 'SEO Audit Report',
@@ -699,6 +702,7 @@ const cs: IMessages = {
         staleHint: 'historii všech crawlů zahrneš přes --all-crawls',
         allCrawlsHeader: 'všechny crawly (--all-crawls)',
         staleSectionTitle: 'stale_not_in_latest_crawl',
+        plusIncremental: n => `+${n} inkrementální crawl${n === 1 ? '' : n < 5 ? 'y' : 'ů'}`,
     },
     seoAudit: {
         reportTitle: 'SEO audit',

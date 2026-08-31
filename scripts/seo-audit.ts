@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from 'path';
 import { messages, resolveLang, langSuffix, ISeoAuditMessages } from './i18n.js';
 import { isHtmlPage, resolveSnapshotMode } from './page-records.js';
+import { readCrawlMode } from '../src/services/crawlManifest.js';
 import { parseKeywordPositions, IKeywordPosition } from './parse-keyword-positions.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -99,6 +100,21 @@ function listDates(domain: string): string[] {
             const toIso = (d: string) => `${d.slice(6)}-${d.slice(3, 5)}-${d.slice(0, 2)}`;
             return toIso(a).localeCompare(toIso(b)); // ascending = oldest first
         });
+}
+
+/**
+ * The crawl dates that together make up the current state of the site: the newest *full* crawl
+ * plus every crawl after it. An incremental crawl only writes the URLs it re-fetched, so its date
+ * folder alone is a delta — auditing it as "the latest crawl" would drop every unchanged page and
+ * produce a near-empty audit. Folders with no manifest count as full (see `readCrawlMode`), so
+ * pre-manifest datasets keep resolving to a single date exactly as before.
+ */
+function currentSnapshotDates(domain: string, allDates: string[]): string[] {
+    const isFull = (date: string): boolean =>
+        readCrawlMode(join('storage', 'datasets', domain, date)) === 'full';
+    // allDates is ascending; findLastIndex gives the newest full crawl to anchor on.
+    const baseline = allDates.map(isFull).lastIndexOf(true);
+    return baseline === -1 ? allDates : allDates.slice(baseline);
 }
 
 function loadPagesFromDir(dir: string): IPageRecord[] {
@@ -509,6 +525,8 @@ function renderKeywordSection(keywords: IKeywordPosition[], m: ISeoAuditMessages
 function renderMarkdown(
     domain: string,
     dates: string[],
+    /** How the crawl scope was chosen — a saved audit must say which slice of the data it read. */
+    scope: string,
     pages: IPageRecord[],
     analyses: IPageAnalysis[],
     pdfPages: IPageRecord[],
@@ -689,6 +707,7 @@ function renderMarkdown(
     return `# ${m.reportTitle} — ${domain}
 
 **${m.metaCrawlDates}:** ${dates.join(', ')}
+**${m.metaGeneratedVia}:** ${scope}
 **${m.metaGenerated}:** ${new Date().toISOString().slice(0, 10)}
 **${m.metaUniquePages}:** ${total}
 
@@ -1042,6 +1061,7 @@ const snapshotMode = resolveSnapshotMode(args); // --all-crawls opts into the hi
 const lang = resolveLang(getArg(args, 'language') ?? getArg(args, 'lang'));
 // Translated message bundle for this run; analyzePage/renderMarkdown close over it.
 const m = messages[lang].seoAudit;
+const ms = messages[lang].snapshot;
 
 const main = (): void => {
     if (!domain) {
@@ -1063,7 +1083,7 @@ const main = (): void => {
         process.exit(1);
     }
 
-    // An explicit --date wins. Otherwise audit the newest crawl only: loading every date
+    // An explicit --date wins. Otherwise audit the current snapshot only: loading every date
     // unions in URLs that were retired long ago, so the audit describes a site state that no
     // longer exists (long-fixed 404s, missing schema on pages that are now redirects).
     // --all-crawls restores the historical union deliberately.
@@ -1071,13 +1091,13 @@ const main = (): void => {
         ? [dateArg]
         : snapshotMode === 'all'
           ? allDates
-          : [allDates[allDates.length - 1]];
+          : currentSnapshotDates(domain, allDates);
 
     console.log(`🔍 Domain: ${domain}`);
     console.log(`📅 Dates to analyze: ${datesToLoad.join(', ')}`);
-    if (!dateArg && snapshotMode === 'latest' && allDates.length > 1) {
+    if (!dateArg && snapshotMode === 'latest' && allDates.length > datesToLoad.length) {
         console.log(
-            `   ⚠ ${allDates.length - 1} older crawl(s) excluded → use --all-crawls to include them`
+            `   ⚠ ${allDates.length - datesToLoad.length} older crawl(s) excluded → use --all-crawls to include them`
         );
     }
 
@@ -1106,9 +1126,19 @@ const main = (): void => {
         }
 
         console.log('📝 Generating SEO audit report...');
+        // Stated in the report header: a saved audit that does not say which crawls it read is
+        // indistinguishable from one describing the site as it is today.
+        const scope = dateArg
+            ? `--date ${dateArg}`
+            : snapshotMode === 'all'
+              ? `--all-crawls (${allDates.length})`
+              : datesToLoad.length > 1
+                ? `${datesToLoad[0]} … ${datesToLoad[datesToLoad.length - 1]} (${ms.plusIncremental(datesToLoad.length - 1)})`
+                : datesToLoad[0];
         const markdown = renderMarkdown(
             domain,
             datesToLoad,
+            scope,
             pages,
             analyses,
             pdfPages,

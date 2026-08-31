@@ -104,7 +104,7 @@ Options:
   --rate-limit=<preset|N/H>          Rate limiting preset or "requests/hours"
   --max-requests=<N>                 Hard cap on pages crawled
   --concurrency=<N>                  Max parallel page loads (default 2 from crawler.yml)
-  --delay-min=<ms>                   Min pause after each page (default 50)
+  --delay-min=<ms>                   Min pause after each page (default 50; 0 is valid)
   --delay-max=<ms>                   Max pause after each page (default 200)
   --max-retries=<N>                  Crawlee maxRequestRetries (default 3 = 4 attempts)
   --block-assets                     Skip CSS/images/fonts/JS — ~1 request per page
@@ -115,7 +115,15 @@ Low-load crawling of third-party sites:
   Prefer --concurrency/--delay-min/--delay-max/--block-assets over --rate-limit.
   The rate limiter sleeps *inside* the request handler, which Crawlee bounds by
   requestHandlerTimeoutSecs (60s). Any throttle longer than that aborts the handler
-  as a timeout and gets retried, increasing load instead of reducing it.
+  as a timeout and gets retried, increasing load instead of reducing it. The
+  inter-request delay sleeps in the same place, so the effective min/max pair is
+  swapped when inverted and clamped to half the handler timeout, each with a warning.
+
+Crawl scope and reports:
+  Every crawl writes _crawl-meta.json into its date folder recording whether it was a
+  full or an --incremental run. An incremental date folder is a *delta*, not a snapshot,
+  so reports anchor on the newest full crawl and layer the incrementals since on top of
+  it. Do not assume "newest date folder == current state of the site".
 
 Rate Limiting Presets:
   conservative   100 req/hour
