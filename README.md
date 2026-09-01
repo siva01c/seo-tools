@@ -587,6 +587,17 @@ docker compose run --rm app npm run crawl -- https://example.com \
 - Prefer the container for reproducible runs; running the `npm run` scripts on the host
   (Node.js >= 20) is also supported for local development
 
+### Standalone checkouts
+
+The three steps above are the whole setup — a fresh clone needs nothing beyond `.env`. The crawler
+and every report script run with no external Docker network, no reverse proxy and no sibling
+repositories.
+
+Only the optional `mcp` service expects a deployment tree around it: shared MCP tokens from
+`../.env.shared` (optional — absent is fine), the statically served frontend from
+`../ludekkvapil/public/seo`, and an external `agentic-ops` network fronted by a reverse proxy. Those
+are needed only if you start that service; `app`, `test` and `typecheck` ignore them.
+
 ### Running NPM Scripts in Docker
 
 ```bash

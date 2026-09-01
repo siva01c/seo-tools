@@ -644,6 +644,13 @@ if (singleUrlMode || process.env.SINGLE_URL_MODE === 'true') {
     console.log(`🎯 Single URL mode enabled - will only crawl the specified URL`);
 }
 
+// Bounds for the lazy-load scroll in the request handler. The budget is the binding constraint;
+// the step cap is a backstop for infinite-scroll pages whose scrollHeight grows as you go. Both
+// sit far below crawler.yml's requestTimeoutSecs so scrolling can never be what times out a page.
+const SCROLL_BUDGET_MS = 5000;
+const SCROLL_STEP_DELAY_MS = 150;
+const SCROLL_MAX_STEPS = 40;
+
 // Function to generate random delay between requests
 const getRandomDelay = (): number => {
     const min = config.crawler.requestDelayMin ?? 500;
@@ -765,64 +772,67 @@ const requestHandler = async ({
         console.log(`🌐 Page loaded: ${request.loadedUrl} - scrolling to bottom...`);
 
         try {
-            await page.evaluate((): Promise<void> => {
-                return new Promise<void>(resolve => {
-                    let totalHeight = 0;
-                    const baseDistance = 50; // Base scroll distance
-                    const baseDelay = 800; // Base delay between scrolls (800ms)
-                    let scrollCount = 0;
+            // Scrolling exists to trigger lazy-loaded content, not to satisfy a bot detector, so
+            // it is bounded three ways: reaching the bottom, a step cap, and a wall-clock budget
+            // that fits comfortably inside requestHandlerTimeoutSecs. The original walk moved 50px
+            // every 800ms with a 3-second pause every 15 steps — minutes on a long page, long
+            // enough for Crawlee to abort the handler as a timeout and retry it, i.e. more load on
+            // the target rather than less. That was invisible until the __name shim above let this
+            // callback run at all; before it, the scroll threw instantly on every page.
+            await page.evaluate(
+                ({
+                    budgetMs,
+                    stepDelayMs,
+                    maxSteps,
+                }: {
+                    budgetMs: number;
+                    stepDelayMs: number;
+                    maxSteps: number;
+                }): Promise<void> =>
+                    new Promise<void>(resolve => {
+                        const startedAt = Date.now();
+                        let steps = 0;
 
-                    const scrollStep = (): void => {
+                        // Hoisted once so each browser global sits on a line of its own: a
+                        // disable comment only covers the next line, and Prettier is free to wrap
+                        // a long expression across several.
                         // eslint-disable-next-line no-undef
-                        const scrollHeight = document.body.scrollHeight;
-
-                        // Random variations to mimic human scrolling
-                        const randomDistance = baseDistance + Math.random() * 30 - 15; // 35-65px
-                        const randomDelay = baseDelay + Math.random() * 400 - 200; // 600-1000ms
-
+                        const win = window;
                         // eslint-disable-next-line no-undef
-                        window.scrollBy(0, randomDistance);
-                        totalHeight += randomDistance;
-                        scrollCount++;
+                        const doc = document;
 
-                        // Log progress every 5 scrolls
-                        if (scrollCount % 5 === 0) {
-                            console.log(
-                                `📜 Scroll progress: ${scrollCount} scrolls, ${Math.round(totalHeight)}px scrolled`
+                        const timer = setInterval(() => {
+                            const scrollHeight = Math.max(
+                                doc.documentElement.scrollHeight,
+                                doc.body.scrollHeight
                             );
-                        }
+                            const atBottom = win.scrollY + win.innerHeight >= scrollHeight - 2;
 
-                        // Add longer breaks every 15 scrolls (more human-like)
-                        if (scrollCount % 15 === 0) {
-                            console.log(
-                                `⏸️  Taking a 3-second break after ${scrollCount} scrolls...`
-                            );
-                            setTimeout(() => {
-                                if (totalHeight >= scrollHeight) {
-                                    console.log(`📜 Reached bottom, scrolling back to top...`);
-                                    // eslint-disable-next-line no-undef
-                                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                                    setTimeout(resolve, 1500); // Wait for smooth scroll
-                                } else {
-                                    setTimeout(scrollStep, randomDelay);
-                                }
-                            }, 3000);
-                        } else {
-                            if (totalHeight >= scrollHeight) {
-                                console.log(`📜 Reached bottom, scrolling back to top...`);
-                                // eslint-disable-next-line no-undef
-                                window.scrollTo({ top: 0, behavior: 'smooth' });
-                                setTimeout(resolve, 1500); // Wait for smooth scroll
-                            } else {
-                                setTimeout(scrollStep, randomDelay);
+                            if (
+                                atBottom ||
+                                ++steps >= maxSteps ||
+                                Date.now() - startedAt >= budgetMs
+                            ) {
+                                clearInterval(timer);
+                                win.scrollTo(0, 0);
+                                resolve();
+                                return;
                             }
-                        }
-                    };
 
-                    // Start scrolling
-                    scrollStep();
-                });
-            });
+                            // Roughly a viewport per step, with a little jitter so the cadence is
+                            // not perfectly uniform.
+                            win.scrollBy(
+                                0,
+                                Math.round(win.innerHeight * (0.8 + Math.random() * 0.2))
+                            );
+                        }, stepDelayMs);
+                    }),
+                {
+                    budgetMs: SCROLL_BUDGET_MS,
+                    stepDelayMs: SCROLL_STEP_DELAY_MS,
+                    maxSteps: SCROLL_MAX_STEPS,
+                }
+            );
         } catch (scrollError) {
             console.warn(
                 `⚠️  Scrolling failed for ${request.loadedUrl}: ${scrollError instanceof Error ? scrollError.message : String(scrollError)}`
@@ -1412,6 +1422,28 @@ const ssrfPreNavigationHook = async (crawlingContext: {
     }
 };
 
+// Defines esbuild's `__name` helper in the page before any page.evaluate() callback runs there.
+//
+// `npm run crawl` is `tsx src/main.ts`, and tsx transforms through esbuild, whose keepNames pass
+// rewrites every *named* function expression as `__name(fn, "name")`. That rewrite also happens
+// inside page.evaluate() callbacks — which Playwright serialises to source and executes in the
+// browser, where `__name` is not defined. The callback then dies with
+// `ReferenceError: __name is not defined`, and since each evaluate is wrapped in its own
+// try/catch the failure only ever surfaced as a warning: auto-scrolling silently did nothing on
+// every single page, so lazy-loaded content was never triggered before extraction.
+//
+// Shimming the helper fixes every current and future evaluate callback regardless of what
+// esbuild injects, which is sturdier than banning named inner functions by convention. The
+// definition mirrors esbuild's own (set the name, return the target). Under `node dist/` the
+// compiled output has no `__name` at all, so this is simply unused there.
+const esbuildNameShimHook = async (crawlingContext: { page: Page }): Promise<void> => {
+    await crawlingContext.page.addInitScript({
+        content:
+            'globalThis.__name = globalThis.__name || ((fn, name) => ' +
+            "Object.defineProperty(fn, 'name', { value: name, configurable: true }));",
+    });
+};
+
 // Subresource kinds skipped when --block-assets is set. Filtering on the browser's own resource
 // type rather than on URL substrings is what makes this safe: crawlee's blockRequests() forwards
 // its patterns to CDP Network.setBlockedURLs, which matches substrings, so a pattern like '.js'
@@ -1437,9 +1469,11 @@ const blockAssetsPreNavigationHook = async (crawlingContext: { page: Page }): Pr
     });
 };
 
-// Hooks shared by the main crawler and both retry crawlers, in navigation order.
+// Hooks shared by the main crawler and both retry crawlers, in navigation order. The SSRF check
+// stays first so a rejected URL costs nothing else.
 const commonPreNavigationHooks = [
     ssrfPreNavigationHook,
+    esbuildNameShimHook,
     ...(commandLineBlockAssets ? [blockAssetsPreNavigationHook] : []),
 ];
 
@@ -2080,10 +2114,13 @@ try {
 // the merge step, which stamps it onto every record) to tell a full snapshot from an incremental
 // delta — without it, an incremental run's date folder looks like "the latest state of the site"
 // and every report silently shrinks to the handful of URLs the delta re-fetched.
+const previousCrawlDate = config.crawler.incrementalConfig?.previousCrawlDate;
 writeCrawlManifest(storageService.getStoragePath('datasets'), {
     crawlDate: storageConfig.dateFolder,
     mode: config.crawler.incrementalMode ? 'incremental' : 'full',
-    previousCrawlDate: config.crawler.incrementalConfig?.previousCrawlDate,
+    // Omitted rather than written as "" — the field means "the crawl this one was diffed
+    // against", and a full crawl was diffed against nothing.
+    ...(previousCrawlDate ? { previousCrawlDate } : {}),
     startUrls: config.targets.startUrls,
     finishedAt: new Date().toISOString(),
 });
