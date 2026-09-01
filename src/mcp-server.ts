@@ -136,11 +136,12 @@ function isEmailRateLimited(email: string): boolean {
     );
 }
 
-// Rate-limit key extraction. This deployment sits behind exactly one trusted reverse proxy
-// (ops-proxy/nginx-proxy on the agentic-ops network — see docker-compose.yml, which now binds
-// the container's host port to 127.0.0.1 so the proxy is the only way in). nginx sets
-// X-Forwarded-For via $proxy_add_x_forwarded_for, which APPENDS the address it actually saw to
-// any value the client already sent — so the trustworthy hop is the LAST entry, not the first.
+// Rate-limit key extraction. This assumes the server sits behind exactly one trusted reverse
+// proxy — docker-compose.yml binds the container's host port to 127.0.0.1 so that proxy is the
+// only way in. An nginx-style proxy sets X-Forwarded-For via $proxy_add_x_forwarded_for, which
+// APPENDS the address it actually saw to any value the client already sent — so the trustworthy
+// hop is the LAST entry, not the first. Exposed without such a proxy, the header is unverifiable
+// and every value below is client-controlled.
 // Trusting the first (client-suppliable) entry, as this used to do, let any caller spoof a new
 // value per request and bypass every per-IP rate limit below (ASVS 4.1.3).
 function clientIp(req: http.IncomingMessage): string {
