@@ -598,6 +598,26 @@ Only the optional `mcp` service expects a deployment tree around it: shared MCP 
 `../ludekkvapil/public/seo`, and an external `agentic-ops` network fronted by a reverse proxy. Those
 are needed only if you start that service; `app`, `test` and `typecheck` ignore them.
 
+To run the MCP server from a plain clone anyway, add the standalone overlay:
+
+```bash
+# Point the frontend mount somewhere local first, or Docker creates a root-owned
+# directory next to your clone.
+mkdir -p storage/frontend
+echo 'SEO_FRONTEND_DIR=./storage/frontend' >> .env
+
+docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d mcp
+curl -s http://127.0.0.1:3001/health
+```
+
+The overlay creates a project-local network instead of expecting the shared one, and runs the server
+with `NODE_ENV=development` so it starts without `SEO_MCP_TOKEN`. **That combination leaves the API
+open to anyone who can reach the port** — it is for local use only.
+
+It is deliberately not called `docker-compose.override.yml`, which Compose loads automatically:
+production deploys keep using the base file on its own (`docker compose up -d mcp`) and so cannot
+pick up these development settings by accident.
+
 ### Running NPM Scripts in Docker
 
 ```bash

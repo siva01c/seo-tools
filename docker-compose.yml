@@ -92,7 +92,11 @@ services:
       - ./config:/home/seobot/config:ro
       # config_seo.toml publishes here (publishDir = "public/seo"); mount just the SEO
       # subsite, not the whole portfolio public/ tree, so unrelated pages aren't served.
-      - ../ludekkvapil/public/seo:/home/seobot/frontend/public:ro
+      # Parameterised because an overlay can only add to a volumes list, never subtract from it:
+      # a standalone checkout has no such sibling and Docker would auto-create the path as a
+      # root-owned directory in the clone's parent. The default is the production path, so a
+      # deployment whose .env never heard of this variable is unaffected.
+      - ${SEO_FRONTEND_DIR:-../ludekkvapil/public/seo}:/home/seobot/frontend/public:ro
     ports:
       # Bound to localhost only: public traffic must go through ops-proxy on the agentic-ops
       # network, which is the only party allowed to set X-Forwarded-For (see clientIp() in

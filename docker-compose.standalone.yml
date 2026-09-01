@@ -1,0 +1,30 @@
+# Standalone overlay for the `mcp` service — running it from a plain clone, with no ops-proxy,
+# no shared network and no sibling repositories.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d mcp
+#
+# Deliberately NOT named docker-compose.override.yml. That filename is loaded automatically by
+# any bare `docker compose up`, so a production deploy that forgot to exclude it would silently
+# switch NODE_ENV to development — which turns the MCP auth guard off (see clientIp()/isAuthorized
+# in mcp-server.ts: a missing SEO_MCP_TOKEN is permitted only outside production) and publish an
+# unauthenticated endpoint. Requiring both -f flags means production cannot pick this up by
+# accident; `docker compose up -d mcp` still resolves to the production configuration alone.
+
+services:
+  mcp:
+    environment:
+      # Lets the server start without SEO_MCP_TOKEN. Fine on a laptop, never on a public host:
+      # with no token and NODE_ENV != production the API is open to whoever can reach the port,
+      # which is why the base file pins production and this overlay is opt-in.
+      NODE_ENV: 'development'
+      # nginx-proxy vhost labels are meaningless without the proxy; point them at localhost so
+      # nothing advertises a public hostname it cannot serve.
+      VIRTUAL_HOST: 'localhost'
+      LETSENCRYPT_HOST: ''
+
+networks:
+  # The base file expects the ops-proxy network to already exist. Standalone there is no such
+  # network, so Compose creates a project-local one instead — an overlay can replace this scalar
+  # even though it could never remove the network from the service's list.
+  agentic-ops:
+    external: false
