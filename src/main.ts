@@ -1412,6 +1412,28 @@ const ssrfPreNavigationHook = async (crawlingContext: {
     }
 };
 
+// Defines esbuild's `__name` helper in the page before any page.evaluate() callback runs there.
+//
+// `npm run crawl` is `tsx src/main.ts`, and tsx transforms through esbuild, whose keepNames pass
+// rewrites every *named* function expression as `__name(fn, "name")`. That rewrite also happens
+// inside page.evaluate() callbacks — which Playwright serialises to source and executes in the
+// browser, where `__name` is not defined. The callback then dies with
+// `ReferenceError: __name is not defined`, and since each evaluate is wrapped in its own
+// try/catch the failure only ever surfaced as a warning: auto-scrolling silently did nothing on
+// every single page, so lazy-loaded content was never triggered before extraction.
+//
+// Shimming the helper fixes every current and future evaluate callback regardless of what
+// esbuild injects, which is sturdier than banning named inner functions by convention. The
+// definition mirrors esbuild's own (set the name, return the target). Under `node dist/` the
+// compiled output has no `__name` at all, so this is simply unused there.
+const esbuildNameShimHook = async (crawlingContext: { page: Page }): Promise<void> => {
+    await crawlingContext.page.addInitScript({
+        content:
+            'globalThis.__name = globalThis.__name || ((fn, name) => ' +
+            "Object.defineProperty(fn, 'name', { value: name, configurable: true }));",
+    });
+};
+
 // Subresource kinds skipped when --block-assets is set. Filtering on the browser's own resource
 // type rather than on URL substrings is what makes this safe: crawlee's blockRequests() forwards
 // its patterns to CDP Network.setBlockedURLs, which matches substrings, so a pattern like '.js'
@@ -1437,9 +1459,11 @@ const blockAssetsPreNavigationHook = async (crawlingContext: { page: Page }): Pr
     });
 };
 
-// Hooks shared by the main crawler and both retry crawlers, in navigation order.
+// Hooks shared by the main crawler and both retry crawlers, in navigation order. The SSRF check
+// stays first so a rejected URL costs nothing else.
 const commonPreNavigationHooks = [
     ssrfPreNavigationHook,
+    esbuildNameShimHook,
     ...(commandLineBlockAssets ? [blockAssetsPreNavigationHook] : []),
 ];
 
@@ -2080,10 +2104,13 @@ try {
 // the merge step, which stamps it onto every record) to tell a full snapshot from an incremental
 // delta — without it, an incremental run's date folder looks like "the latest state of the site"
 // and every report silently shrinks to the handful of URLs the delta re-fetched.
+const previousCrawlDate = config.crawler.incrementalConfig?.previousCrawlDate;
 writeCrawlManifest(storageService.getStoragePath('datasets'), {
     crawlDate: storageConfig.dateFolder,
     mode: config.crawler.incrementalMode ? 'incremental' : 'full',
-    previousCrawlDate: config.crawler.incrementalConfig?.previousCrawlDate,
+    // Omitted rather than written as "" — the field means "the crawl this one was diffed
+    // against", and a full crawl was diffed against nothing.
+    ...(previousCrawlDate ? { previousCrawlDate } : {}),
     startUrls: config.targets.startUrls,
     finishedAt: new Date().toISOString(),
 });

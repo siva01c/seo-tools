@@ -58,7 +58,12 @@ services:
       target: production
     container_name: seo-tools-mcp
     env_file:
-      - ../.env.shared
+      # Shared MCP tokens, provided by the deployment tree this repo is checked out into.
+      # Optional: Compose validates env_file for *every* service when it loads the project, not
+      # just the one being started, so a hard reference here made `docker compose run app` fail
+      # in any clone that has no such sibling file — i.e. every standalone checkout.
+      - path: ../.env.shared
+        required: false
       - .env
     environment:
       NODE_ENV: 'production'
