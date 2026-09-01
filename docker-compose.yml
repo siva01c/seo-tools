@@ -58,64 +58,46 @@ services:
       target: production
     container_name: seo-tools-mcp
     env_file:
-      # Shared MCP tokens, provided by the deployment tree this repo is checked out into.
-      # Optional: Compose validates env_file for *every* service when it loads the project, not
-      # just the one being started, so a hard reference here made `docker compose run app` fail
-      # in any clone that has no such sibling file — i.e. every standalone checkout.
-      - path: ../.env.shared
-        required: false
       - .env
     environment:
+      # Production posture by default: mcp-server.ts refuses to start without SEO_MCP_TOKEN when
+      # NODE_ENV=production. That is deliberate for a service that listens on a socket — generate
+      # a token (`openssl rand -hex 24`, see .env.example) rather than relaxing this.
       NODE_ENV: 'production'
       NODE_OPTIONS: '--max-old-space-size=1024'
       APIFY_LOCAL_STORAGE_DIR: /home/seobot/storage
       MCP_PORT: '3000'
-      FRONTEND_DIR: '/home/seobot/frontend/public'
-      VIRTUAL_HOST: 'seo.ludekkvapil.cz,seo.local'
-      LETSENCRYPT_HOST: 'seo.ludekkvapil.cz'
-      VIRTUAL_PORT: '3000'
-      VIRTUAL_PROTO: 'http'
-      VIRTUAL_NETWORK: 'agentic-ops'
-      HTTPS_METHOD: 'noredirect'
-      # Crawlee sizes its autoscaling budget from host RAM (25% = 1 GB on this 4 GB box) and
-      # each crawl child process does so independently — it has no idea a sibling crawl is
-      # running. With SEO_MAX_CONCURRENT_CRAWLS=2 that means 2 GB of assumed budget against a
-      # 1.5 G container limit. Pin it so two crawls together stay under the limit and the
-      # autoscaler throttles concurrency before the cgroup OOM killer has to.
+      FRONTEND_DIR: /home/seobot/frontend/public
+      # Crawlee sizes its autoscaling budget from total host RAM, and each crawl child process
+      # does so independently — it has no idea a sibling crawl is running. With
+      # SEO_MAX_CONCURRENT_CRAWLS=2 that doubles the assumed budget against a single container
+      # limit. Pin it so concurrent crawls stay inside the limit below and the autoscaler
+      # throttles before the cgroup OOM killer has to.
       CRAWLEE_MEMORY_MBYTES: '512'
     volumes:
       - ./storage:/home/seobot/storage
-      # Mounted read-only so crawler.yml changes need only `docker compose restart mcp`, not a
-      # full image rebuild (npm ci + tsc is painful on a 4 GB VPS with no swap). configService
-      # reads process.cwd()/config/crawler.yml and nothing writes back into config/ — the
-      # rate limiter persists to ./storage/rate-limiting/ instead.
+      # Read-only so crawler.yml changes need only `docker compose restart mcp`, not an image
+      # rebuild. configService reads process.cwd()/config/crawler.yml and nothing writes back
+      # into config/ — the rate limiter persists to ./storage/rate-limiting/ instead.
       - ./config:/home/seobot/config:ro
-      # config_seo.toml publishes here (publishDir = "public/seo"); mount just the SEO
-      # subsite, not the whole portfolio public/ tree, so unrelated pages aren't served.
-      - ../ludekkvapil/public/seo:/home/seobot/frontend/public:ro
+      # Static files served alongside the API. Point SEO_FRONTEND_DIR at your own build output
+      # if you have one; the default is an empty directory inside the repo, which simply 404s.
+      - ${SEO_FRONTEND_DIR:-./storage/frontend}:/home/seobot/frontend/public:ro
     ports:
-      # Bound to localhost only: public traffic must go through ops-proxy on the agentic-ops
-      # network, which is the only party allowed to set X-Forwarded-For (see clientIp() in
-      # mcp-server.ts). Publishing this on 0.0.0.0 would let anyone bypass the proxy and forge
-      # that header directly, defeating all per-IP rate limiting (ASVS 4.1.3).
+      # Localhost only. clientIp() in mcp-server.ts trusts X-Forwarded-For, so this port must be
+      # reachable only by a trusted reverse proxy that overwrites that header; publishing it on
+      # 0.0.0.0 would let anyone forge it and defeat all per-IP rate limiting (ASVS 4.1.3).
+      # A deployment that fronts this with a proxy supplies its own compose overlay.
       - '127.0.0.1:3001:3000'
     # xvfb provides a display for crawls that retry with a visible browser
     command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped
-    # Sized against the host, not against what a crawl might want: the VPS is a 4 GB LXC with
-    # no swap and ~1.7 GB free, so a 2.5 G limit would never be reached — the host OOM killer
-    # fires first and picks the largest RSS on the box (a neighbouring MySQL), not the crawler.
-    # A measured crawl costs ~270-330 MB on top of a ~40 MB idle container, so 1.5 G leaves
-    # room for two concurrent crawls while still capping the blast radius.
+    # Sized so two concurrent crawls fit with headroom: a measured crawl costs ~270-330 MB on top
+    # of a ~40 MB idle container. The cap matters more than the headroom — on a small host the
+    # OOM killer picks the largest RSS on the box, which may well be an unrelated service.
     deploy:
       resources:
         limits:
           memory: 1.5G
         reservations:
           memory: 512M
-    networks:
-      - agentic-ops
-
-networks:
-  agentic-ops:
-    external: true

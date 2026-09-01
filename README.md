@@ -587,16 +587,39 @@ docker compose run --rm app npm run crawl -- https://example.com \
 - Prefer the container for reproducible runs; running the `npm run` scripts on the host
   (Node.js >= 20) is also supported for local development
 
-### Standalone checkouts
+### Running the MCP server
 
-The three steps above are the whole setup — a fresh clone needs nothing beyond `.env`. The crawler
-and every report script run with no external Docker network, no reverse proxy and no sibling
-repositories.
+`docker-compose.yml` describes the application on its own — no external Docker network, no reverse
+proxy, no sibling repositories. A fresh clone needs nothing beyond `.env`.
 
-Only the optional `mcp` service expects a deployment tree around it: shared MCP tokens from
-`../.env.shared` (optional — absent is fine), the statically served frontend from
-`../ludekkvapil/public/seo`, and an external `agentic-ops` network fronted by a reverse proxy. Those
-are needed only if you start that service; `app`, `test` and `typecheck` ignore them.
+The `mcp` service exposes the crawler over HTTP and the Model Context Protocol. It refuses to start
+without a token, which is the right default for anything listening on a socket:
+
+```bash
+# generate a token and put it in .env
+echo "SEO_MCP_TOKEN=$(openssl rand -hex 24)" >> .env
+
+docker compose up -d mcp
+curl -s http://127.0.0.1:3001/health          # {"status":"ok","activeJobs":0}
+```
+
+The port is published on `127.0.0.1` only. `clientIp()` trusts `X-Forwarded-For`, so the server must
+be reachable only through a proxy that overwrites that header — otherwise per-IP rate limiting can
+be bypassed by forging it.
+
+Static frontend files are served from `SEO_FRONTEND_DIR` (default `./storage/frontend`, an empty
+directory — the frontend routes 404 while the API and MCP endpoints work normally). Point it at your
+own build output if you have one.
+
+**Deploying behind a reverse proxy** — an external network, vhost labels, extra mounts and so on —
+is deployment-specific and does not belong in this repository. Supply those with your own compose
+overlay:
+
+```bash
+docker compose -f docker-compose.yml -f /path/to/your-deployment.yml up -d mcp
+```
+
+Relative paths inside the overlay resolve against the _base_ file's directory, not the overlay's.
 
 ### Running NPM Scripts in Docker
 
