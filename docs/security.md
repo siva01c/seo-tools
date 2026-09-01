@@ -66,10 +66,10 @@ before actually connecting.
 This is a classic TOCTOU SSRF gap via DNS rebinding: an attacker submits a domain they control, lets
 it resolve to a public IP long enough to pass `validateCrawlTarget()`, then re-points the record
 (short TTL) at a private address before Playwright's actual request goes out. Because the crawler
-child process runs in the same container as `mcp-server.ts` on the `agentic-ops` Docker network, a
-successful rebind could reach this monorepo's other internal services (MongoDB, the mail API, etc.),
-not just an arbitrary public site — a materially worse outcome than the domain-ownership risk
-accepted above.
+child process runs in the same container as `mcp-server.ts`, a successful rebind reaches whatever
+that container's network can reach — in a deployment that places it alongside other services, that
+means those services, not just an arbitrary public site. A materially worse outcome than the
+domain-ownership risk accepted above.
 
 **Fix:** extracted the IP-check logic to `src/services/ssrfGuard.ts` (`checkUrlIsSafeToRequest`),
 shared by `mcp-server.ts`'s submission-time check and a new `preNavigationHooks` entry

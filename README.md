@@ -587,36 +587,39 @@ docker compose run --rm app npm run crawl -- https://example.com \
 - Prefer the container for reproducible runs; running the `npm run` scripts on the host
   (Node.js >= 20) is also supported for local development
 
-### Standalone checkouts
+### Running the MCP server
 
-The three steps above are the whole setup — a fresh clone needs nothing beyond `.env`. The crawler
-and every report script run with no external Docker network, no reverse proxy and no sibling
-repositories.
+`docker-compose.yml` describes the application on its own — no external Docker network, no reverse
+proxy, no sibling repositories. A fresh clone needs nothing beyond `.env`.
 
-Only the optional `mcp` service expects a deployment tree around it: shared MCP tokens from
-`../.env.shared` (optional — absent is fine), the statically served frontend from
-`../ludekkvapil/public/seo`, and an external `agentic-ops` network fronted by a reverse proxy. Those
-are needed only if you start that service; `app`, `test` and `typecheck` ignore them.
-
-To run the MCP server from a plain clone anyway, add the standalone overlay:
+The `mcp` service exposes the crawler over HTTP and the Model Context Protocol. It refuses to start
+without a token, which is the right default for anything listening on a socket:
 
 ```bash
-# Point the frontend mount somewhere local first, or Docker creates a root-owned
-# directory next to your clone.
-mkdir -p storage/frontend
-echo 'SEO_FRONTEND_DIR=./storage/frontend' >> .env
+# generate a token and put it in .env
+echo "SEO_MCP_TOKEN=$(openssl rand -hex 24)" >> .env
 
-docker compose -f docker-compose.yml -f docker-compose.standalone.yml up -d mcp
-curl -s http://127.0.0.1:3001/health
+docker compose up -d mcp
+curl -s http://127.0.0.1:3001/health          # {"status":"ok","activeJobs":0}
 ```
 
-The overlay creates a project-local network instead of expecting the shared one, and runs the server
-with `NODE_ENV=development` so it starts without `SEO_MCP_TOKEN`. **That combination leaves the API
-open to anyone who can reach the port** — it is for local use only.
+The port is published on `127.0.0.1` only. `clientIp()` trusts `X-Forwarded-For`, so the server must
+be reachable only through a proxy that overwrites that header — otherwise per-IP rate limiting can
+be bypassed by forging it.
 
-It is deliberately not called `docker-compose.override.yml`, which Compose loads automatically:
-production deploys keep using the base file on its own (`docker compose up -d mcp`) and so cannot
-pick up these development settings by accident.
+Static frontend files are served from `SEO_FRONTEND_DIR` (default `./storage/frontend`, an empty
+directory — the frontend routes 404 while the API and MCP endpoints work normally). Point it at your
+own build output if you have one.
+
+**Deploying behind a reverse proxy** — an external network, vhost labels, extra mounts and so on —
+is deployment-specific and does not belong in this repository. Supply those with your own compose
+overlay:
+
+```bash
+docker compose -f docker-compose.yml -f /path/to/your-deployment.yml up -d mcp
+```
+
+Relative paths inside the overlay resolve against the _base_ file's directory, not the overlay's.
 
 ### Running NPM Scripts in Docker
 
