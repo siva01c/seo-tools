@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import { join } from 'path';
+import { ddmmyyyyToSortKey } from './page-records.js';
 
 export interface IKeywordPosition {
     keyword: string;
@@ -15,22 +16,46 @@ export interface IKeywordPosition {
     tag: string;
 }
 
+/** First .csv/.tsv in a directory, sorted for determinism when more than one is present. */
+function firstExportIn(dir: string): string | null {
+    const candidate = readdirSync(dir)
+        .filter(f => /\.(csv|tsv)$/i.test(f))
+        .sort()[0];
+    return candidate ? join(dir, candidate) : null;
+}
+
 /**
  * Locate the keyword export for a domain in storage/external_datasources/<domain>/.
  *
  * The file name is not fixed: exports are dropped in per client and carry whatever name
- * the export tool gave them, so any .csv/.tsv in the domain directory is treated as the
- * export. Sorted for determinism when more than one is present.
+ * the export tool gave them, so any .csv/.tsv is treated as the export.
+ *
+ * Exports are date-partitioned as <domain>/<DD-MM-YYYY>/, the same as datasets/ and reports/,
+ * so successive exports accumulate instead of overwriting each other and the newest one wins.
+ * That folder layout is why this used to find nothing: the function only looked for loose files
+ * in the domain directory, so an export sitting in its date folder was invisible and the audit
+ * silently skipped its keyword section.
+ *
+ * A loose file directly in the domain directory still works, and takes second place — dates
+ * are the convention, but an export dropped in by hand should not be ignored.
  */
 function findExportFile(domain: string): string | null {
     const domainDir = join('storage', 'external_datasources', domain);
     if (!existsSync(domainDir)) return null;
 
-    const candidate = readdirSync(domainDir)
-        .filter(f => /\.(csv|tsv)$/i.test(f))
-        .sort()[0];
+    // Sort on the YYYY-MM-DD key, not the folder name: 01-09-2026 is newer than 07-08-2026
+    // but sorts before it as a string.
+    const dateFolders = readdirSync(domainDir)
+        .filter(name => /^\d{2}-\d{2}-\d{4}$/.test(name))
+        .filter(name => statSync(join(domainDir, name)).isDirectory())
+        .sort((a, b) => ddmmyyyyToSortKey(a).localeCompare(ddmmyyyyToSortKey(b)));
 
-    return candidate ? join(domainDir, candidate) : null;
+    for (const folder of [...dateFolders].reverse()) {
+        const found = firstExportIn(join(domainDir, folder));
+        if (found) return found;
+    }
+
+    return firstExportIn(domainDir);
 }
 
 /**

@@ -34,6 +34,17 @@ describe('parseKeywordPositions', () => {
         fs.writeFileSync(path.join(dir, fileName), lines.join('\n'));
     };
 
+    /** Same, but under a <domain>/<folder>/ subdirectory — how exports are actually filed. */
+    const writeExportInFolder = (
+        folder: string,
+        lines: string[],
+        fileName = 'lkv-semo-keywords.csv'
+    ): void => {
+        const dir = path.join(tmpDir, 'storage', 'external_datasources', DOMAIN, folder);
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, fileName), lines.join('\n'));
+    };
+
     beforeEach(() => {
         originalCwd = process.cwd();
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keyword-positions-test-'));
@@ -89,6 +100,55 @@ describe('parseKeywordPositions', () => {
             writeExport([HEADER, row({ 1: 'from-b' })], 'b-export.csv');
 
             expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('from-a');
+        });
+
+        it('finds an export inside a DD-MM-YYYY folder', () => {
+            // Exports are date-partitioned like datasets/ and reports/. Before this was handled,
+            // a file in its date folder was invisible and the audit skipped its keyword section.
+            writeExportInFolder('07-08-2026', [HEADER, row({ 1: 'from-folder', 5: '4' })]);
+
+            const result = parseKeywordPositions(DOMAIN);
+
+            expect(result).toHaveLength(1);
+            expect(result[0].keyword).toBe('from-folder');
+        });
+
+        it('sorts date folders as dates, not as strings', () => {
+            // 01-09-2026 is newer than 07-08-2026 but sorts before it lexicographically.
+            writeExportInFolder('07-08-2026', [HEADER, row({ 1: 'older' })]);
+            writeExportInFolder('01-09-2026', [HEADER, row({ 1: 'newer' })]);
+
+            expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('newer');
+        });
+
+        it('falls back to the next date folder when the newest holds no export', () => {
+            writeExportInFolder('07-08-2026', [HEADER, row({ 1: 'older' })]);
+            fs.mkdirSync(
+                path.join(tmpDir, 'storage', 'external_datasources', DOMAIN, '01-09-2026'),
+                { recursive: true }
+            );
+
+            expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('older');
+        });
+
+        it('prefers a date folder over a loose file in the domain directory', () => {
+            writeExport([HEADER, row({ 1: 'loose' })]);
+            writeExportInFolder('01-09-2026', [HEADER, row({ 1: 'dated' })]);
+
+            expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('dated');
+        });
+
+        it('still reads a loose file when no date folder has one', () => {
+            writeExport([HEADER, row({ 1: 'loose' })]);
+
+            expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('loose');
+        });
+
+        it('ignores directories that are not DD-MM-YYYY', () => {
+            writeExportInFolder('archive', [HEADER, row({ 1: 'archived' })]);
+            writeExport([HEADER, row({ 1: 'loose' })]);
+
+            expect(parseKeywordPositions(DOMAIN)[0].keyword).toBe('loose');
         });
     });
 
