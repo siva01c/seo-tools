@@ -485,6 +485,43 @@ docker compose run --rm app npx tsx scripts/generate-title-description-fixes.ts 
 # Output:  storage/reports/<domain>/title-description-fixes-<date>.json (+ .csv)
 ```
 
+### Cross-Domain Content Mapping — `match-cross-domain-content.ts`
+
+Pairs the pages of **two crawled domains that hold the same content in different languages**, so you
+can see which source pages already exist on the target site and which still need translating. Unlike
+`compare-sitemaps.ts` (two crawls of one domain), the two sides have translated titles and
+translated URL slugs, so there is no shared key — three passes run strongest-first:
+
+1. **`--alias-map`** — a CSV exported from the CMS that owns both language versions, shaped
+   `system_path,source_alias,target_alias`. Authoritative, and a pair is only accepted once both
+   URLs are confirmed present in their crawl.
+2. **Deterministic keys** — matching titles and slugs, plus product model codes, which survive
+   translation (`Sliding Balancer Track (SBT)` ↔ a page simply titled `SBT`). Ambiguous keys are
+   skipped.
+3. **LLM** — picks from the still-unmatched target pages, and may answer "no counterpart", which on
+   a partially translated site is usually the correct answer. Uses the same `LLM_*` env vars as
+   above; `--no-llm` skips this pass entirely.
+
+Pass 2 matches noticeably better when it knows the sites' own vocabulary — the qualifiers their
+product slugs carry, the nouns their titles repeat until they identify nothing. That goes in a
+`--profile` YAML file (see
+[`config/examples/match-profile.yml`](config/examples/match-profile.yml)), which belongs with the
+site's own project rather than in this repo. Without one the matcher runs on domain-neutral
+defaults.
+
+```bash
+docker compose run --rm app npm run report:content-mapping -- \
+  --source example.com --target example.cz \
+  --source-path-prefix /en --alias-map ../alias-map.csv \
+  --profile ../match-profile.yml --csv
+# Options: --source <d>, --target <d> (both required), --source-path-prefix, --target-path-prefix,
+#          --alias-map <csv>, --profile <yml>, --no-llm, --output-dir <dir>, --csv,
+#          --language <cs|en>, --all-crawls
+# Output:  storage/reports/<source>/<crawl-date>/content-mapping-<date>.json (+ .csv)
+#          One row per source page (status matched | missing_target), then the target pages with
+#          no source counterpart (status target_only).
+```
+
 ### 404 Link Report — `report-404s.ts`
 
 Lists URLs that returned **HTTP 404** among the pages the crawler actually visited, grouped with

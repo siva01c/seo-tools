@@ -82,6 +82,14 @@ make shell
 # Compare sitemaps (incremental planning)
 docker compose run --rm app npx tsx scripts/compare-sitemaps.ts \
   --domain example.com --previous-date 12-07-2025
+
+# Map one domain's pages onto their translations on another domain
+# (alias map → deterministic keys → LLM; see README "Cross-Domain Content Mapping").
+# Site-specific slug/stopword vocabulary goes in a --profile YAML kept with that site's
+# project, not here — config/examples/match-profile.yml documents the shape.
+docker compose run --rm app npm run report:content-mapping -- \
+  --source example.com --target example.cz --source-path-prefix /en \
+  --profile ../match-profile.yml --csv
 ```
 
 ### Command Line Options

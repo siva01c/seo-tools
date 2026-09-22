@@ -49,6 +49,7 @@
     "report:seo-issues": "tsx scripts/report-seo-issues.ts",
     "seo-audit": "tsx scripts/seo-audit.ts",
     "report:pdf": "tsx scripts/report-pdf.ts",
+    "report:content-mapping": "tsx scripts/match-cross-domain-content.ts",
     "purge-old-data": "tsx scripts/purge-old-data.ts",
     "build": "tsc",
     "test": "NODE_ENV=test NODE_OPTIONS=\"--experimental-vm-modules\" jest",

@@ -366,6 +366,17 @@ export interface ITitleDescriptionFixesMessages {
     sumWritten: string;
 }
 
+export interface IContentMappingMessages {
+    csvHeader: string[];
+    sumHeader: string;
+    sumSourcePages: string;
+    sumTargetPages: string;
+    sumMatched: string;
+    sumMissing: string;
+    sumTargetOnly: string;
+    sumWritten: string;
+}
+
 /**
  * Shared across every report script: how the crawl slice being reported on is announced.
  * Reports describe the newest crawl by default, so they must say which crawl that was and
@@ -390,6 +401,7 @@ export interface IMessages {
     linkGraphIssues: ILinkGraphIssuesMessages;
     sitemapIssues: ISitemapIssuesMessages;
     titleDescriptionFixes: ITitleDescriptionFixesMessages;
+    contentMapping: IContentMappingMessages;
 }
 
 // ── English ────────────────────────────────────────────────────────────────────
@@ -710,6 +722,26 @@ const en: IMessages = {
         ],
         sumHeader: '📊 Summary',
         sumGenerated: 'Fixes generated',
+        sumWritten: 'Reports written to',
+    },
+    contentMapping: {
+        csvHeader: [
+            'source_url',
+            'source_title',
+            'source_section',
+            'target_url',
+            'target_title',
+            'match_method',
+            'confidence',
+            'status',
+            'notes',
+        ],
+        sumHeader: '📊 Summary',
+        sumSourcePages: 'Source pages',
+        sumTargetPages: 'Target pages',
+        sumMatched: 'Matched',
+        sumMissing: 'Missing on target',
+        sumTargetOnly: 'Only on target',
         sumWritten: 'Reports written to',
     },
 };
@@ -1051,6 +1083,26 @@ const cs: IMessages = {
         ],
         sumHeader: '📊 Souhrn',
         sumGenerated: 'Vygenerováno oprav',
+        sumWritten: 'Reporty zapsány do',
+    },
+    contentMapping: {
+        csvHeader: [
+            'zdrojova_url',
+            'zdrojovy_titulek',
+            'zdrojova_sekce',
+            'cilova_url',
+            'cilovy_titulek',
+            'zpusob_parovani',
+            'jistota',
+            'stav',
+            'poznamka',
+        ],
+        sumHeader: '📊 Souhrn',
+        sumSourcePages: 'Zdrojových stránek',
+        sumTargetPages: 'Cílových stránek',
+        sumMatched: 'Spárováno',
+        sumMissing: 'Chybí na cílovém webu',
+        sumTargetOnly: 'Pouze na cílovém webu',
         sumWritten: 'Reporty zapsány do',
     },
 };

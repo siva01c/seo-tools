@@ -94,15 +94,20 @@ const buildUserPrompt = (input: ITitleDescriptionFixInput): string => {
     return parts.join('\n');
 };
 
-/** Strips a ```json ... ``` fence (or bare ``` fence) that some models wrap responses in
- * despite being asked for raw JSON, then parses it. Returns null on unparseable output rather
- * than throwing, so callers can skip-and-log instead of crashing a batch run. */
-export const parseLlmJsonResponse = (raw: string): ITitleDescriptionFixResult | null => {
-    const stripped = raw
+/** Strips a ```json ... ``` fence (or bare ``` fence) that some models wrap responses in despite
+ * being asked for raw JSON. */
+export const stripJsonFence = (raw: string): string =>
+    raw
         .trim()
         .replace(/^```(?:json)?\s*/i, '')
         .replace(/```\s*$/i, '')
         .trim();
+
+/** Strips a ```json ... ``` fence (or bare ``` fence) that some models wrap responses in
+ * despite being asked for raw JSON, then parses it. Returns null on unparseable output rather
+ * than throwing, so callers can skip-and-log instead of crashing a batch run. */
+export const parseLlmJsonResponse = (raw: string): ITitleDescriptionFixResult | null => {
+    const stripped = stripJsonFence(raw);
     try {
         const parsed: unknown = JSON.parse(stripped);
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
@@ -148,6 +153,125 @@ export const generateTitleDescriptionFix = async (
         return parseLlmJsonResponse(content);
     } catch (error) {
         console.warn(`LLM fix generation failed for ${input.url}:`, error);
+        return null;
+    }
+};
+
+// ── Cross-language page matching ─────────────────────────────────────────────
+
+export interface IPageMatchCandidate {
+    /** Path on the target site, used verbatim as the answer key. */
+    path: string;
+    title?: string;
+    description?: string;
+}
+
+export interface IPageMatchInput {
+    /** Path of the source page being matched, for logging and prompt context. */
+    sourcePath: string;
+    sourceTitle?: string;
+    sourceDescription?: string;
+    /** Bounded excerpt of the source page's main text content. */
+    contentExcerpt: string;
+    candidates: IPageMatchCandidate[];
+}
+
+export interface IPageMatchResult {
+    /** Target path the model picked, or null when it found no counterpart. */
+    path: string | null;
+    confidence: 'high' | 'medium' | 'low';
+    reason?: string;
+}
+
+const PAGE_MATCH_SYSTEM_PROMPT = `You match a page from an English website to its translated
+counterpart on a Czech website. The two sites share content but use translated titles and URL
+slugs, so match on meaning, not on wording. Rules:
+- Pick a candidate only if it is the SAME page — the same product, the same case study, the same
+  article — not merely a related or same-category page.
+- Product model codes (MFD, SBT, KUA-160, FAN-28, DraftMax Eco) are decisive: they are not
+  translated, so a shared code is strong evidence and a conflicting code rules a candidate out.
+- Much of the English site has no Czech counterpart at all. Answering null is expected and
+  correct in that case — never stretch to the nearest topic.
+- confidence: "high" when a model code or an unambiguous title/topic match settles it, "medium"
+  when the topic matches but wording differs enough to leave doubt, "low" when it is a guess.
+- reason: one short clause, in English, naming what decided it.
+- Respond with ONLY a raw JSON object, no markdown code fences, no commentary:
+  {"path": "/some/path", "confidence": "high", "reason": "..."} or {"path": null}`;
+
+const buildPageMatchPrompt = (input: IPageMatchInput): string => {
+    const candidates = input.candidates
+        .map(c => {
+            const title = stripPiiFromText(c.title ?? '(no title)');
+            const description = c.description ? ` — ${stripPiiFromText(c.description)}` : '';
+            return `${c.path} | ${title}${description}`;
+        })
+        .join('\n');
+
+    return `English page to match:
+PATH: ${input.sourcePath}
+TITLE: ${stripPiiFromText(input.sourceTitle ?? '(missing)')}
+META DESCRIPTION: ${stripPiiFromText(input.sourceDescription ?? '(missing)')}
+CONTENT EXCERPT: ${stripPiiFromText(input.contentExcerpt)}
+
+Czech candidate pages (path | title — description):
+${candidates}
+
+Which candidate path is the Czech version of the English page above, if any?`;
+};
+
+/** Parses a page-match response. Returns null on unparseable output, and a result with
+ * `path: null` when the model reported no counterpart — those are different answers, so callers
+ * can tell a failed call apart from a deliberate "no match". */
+export const parsePageMatchResponse = (raw: string): IPageMatchResult | null => {
+    try {
+        const parsed: unknown = JSON.parse(stripJsonFence(raw));
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+        const record = parsed as Record<string, unknown>;
+        if (!('path' in record)) return null;
+        const path =
+            typeof record.path === 'string' && record.path.trim() !== '' ? record.path : null;
+        const rawConfidence = record.confidence;
+        const confidence =
+            rawConfidence === 'high' || rawConfidence === 'medium' || rawConfidence === 'low'
+                ? rawConfidence
+                : 'low';
+        return {
+            path,
+            confidence,
+            reason: typeof record.reason === 'string' ? record.reason : undefined,
+        };
+    } catch {
+        return null;
+    }
+};
+
+/** Calls the configured LLM to pick the translated counterpart of one page from a candidate list.
+ * Returns null on any failure (timeout, network error, unparseable response) so callers can skip
+ * that page rather than aborting the whole batch. */
+export const matchTranslatedPage = async (
+    client: OpenAI,
+    config: ILlmClientConfig,
+    input: IPageMatchInput,
+    timeoutMs = 60000
+): Promise<IPageMatchResult | null> => {
+    if (input.candidates.length === 0) return { path: null, confidence: 'high' };
+    try {
+        const response = await client.chat.completions.create(
+            {
+                model: config.model,
+                messages: [
+                    { role: 'system', content: PAGE_MATCH_SYSTEM_PROMPT },
+                    { role: 'user', content: buildPageMatchPrompt(input) },
+                ],
+                temperature: 0,
+            },
+            { timeout: timeoutMs }
+        );
+        const content = response.choices[0]?.message?.content;
+        if (!content) return null;
+        return parsePageMatchResponse(content);
+    } catch (error) {
+        console.warn(`LLM page match failed for ${input.sourcePath}:`, error);
         return null;
     }
 };
