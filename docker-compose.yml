@@ -88,7 +88,8 @@ services:
       # reachable only by a trusted reverse proxy that overwrites that header; publishing it on
       # 0.0.0.0 would let anyone forge it and defeat all per-IP rate limiting (ASVS 4.1.3).
       # A deployment that fronts this with a proxy supplies its own compose overlay.
-      - '127.0.0.1:3001:3000'
+      # SEO_MCP_HOST_PORT moves the binding where 3001 is already taken on the host.
+      - '127.0.0.1:${SEO_MCP_HOST_PORT:-3001}:3000'
     # xvfb provides a display for crawls that retry with a visible browser
     command: ['sh', '-c', './start_xvfb_and_run_cmd.sh && node dist/src/mcp-server.js']
     restart: unless-stopped

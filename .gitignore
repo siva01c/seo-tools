@@ -11,3 +11,5 @@ storage
 # Added by Apify CLI
 .venv
 .env
+# Local deployment overlay (e.g. attaching the MCP server to a shared network)
+docker-compose.override.yml
