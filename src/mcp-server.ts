@@ -1,6 +1,6 @@
 /**
  * MCP HTTP server for seo-tools.
- * Exposes crawl, get_report, and list_reports as JSON-RPC 2.0 tools.
+ * Exposes crawl, get_report, list_reports and get_findings as JSON-RPC 2.0 tools.
  * Auth: Authorization: Basic <base64(SEO_MCP_TOKEN)>
  */
 import * as http from 'http';
@@ -10,6 +10,7 @@ import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { checkUrlIsSafeToRequest } from './services/ssrfGuard.js';
 import { ensureReportPdf } from './services/reportPdfService.js';
+import { getFindings, isValidDomain } from './services/findingsService.js';
 
 const PORT = parseInt(process.env.MCP_PORT ?? '3001', 10);
 const SEO_MCP_TOKEN = process.env.SEO_MCP_TOKEN ?? '';
@@ -216,9 +217,11 @@ function validateCrawlTarget(rawUrl: string): Promise<string | null> {
 
 // ── Crawler process runner (compiled dist in production, tsx in dev) ─────────
 
-function resolveRunner(script: 'crawl' | 'seo-audit'): { cmd: string; args: string[] } {
+type RunnerScript = 'crawl' | 'seo-audit' | 'report-seo-issues' | 'report-404s';
+
+function resolveRunner(script: RunnerScript): { cmd: string; args: string[] } {
     const distCandidates =
-        script === 'crawl' ? ['dist/main.js', 'dist/src/main.js'] : ['dist/scripts/seo-audit.js'];
+        script === 'crawl' ? ['dist/main.js', 'dist/src/main.js'] : [`dist/scripts/${script}.js`];
     for (const candidate of distCandidates) {
         if (fs.existsSync(path.join(process.cwd(), candidate))) {
             return { cmd: 'node', args: [candidate] };
@@ -226,7 +229,7 @@ function resolveRunner(script: 'crawl' | 'seo-audit'): { cmd: string; args: stri
     }
     return {
         cmd: 'npx',
-        args: ['tsx', script === 'crawl' ? 'src/main.ts' : 'scripts/seo-audit.ts'],
+        args: ['tsx', script === 'crawl' ? 'src/main.ts' : `scripts/${script}.ts`],
     };
 }
 
@@ -295,6 +298,12 @@ const TOOLS = [
                         'Disable robots.txt enforcement for this crawl. robots.txt is respected by default; only set this for authorized/internal crawls.',
                     default: false,
                 },
+                generate_findings: {
+                    type: 'boolean',
+                    description:
+                        'After a successful crawl, also generate the structured findings read by get_findings. The job reports done only once they exist.',
+                    default: false,
+                },
                 basic_auth_user: {
                     type: 'string',
                     description:
@@ -326,6 +335,26 @@ const TOOLS = [
                     description: 'Optional job_id to check status of a running crawl',
                 },
             },
+            additionalProperties: false,
+        },
+    },
+    {
+        name: 'get_findings',
+        description:
+            'Structured SEO findings for a domain, grouped per check and kind, with severity, a stable fingerprint for deduplication and the URL delta against the previous report. Needs a crawl run with generate_findings.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                domain: {
+                    type: 'string',
+                    description: 'Domain to read findings for (e.g. example.com)',
+                },
+                date: {
+                    type: 'string',
+                    description: 'Report folder date DD-MM-YYYY; defaults to the newest one',
+                },
+            },
+            required: ['domain'],
             additionalProperties: false,
         },
     },
@@ -420,6 +449,15 @@ function handleCrawl(args: Record<string, unknown>): string {
     if (activeCrawlCount() >= MAX_CONCURRENT_CRAWLS) {
         return JSON.stringify({ error: 'Too many crawls in progress, try again later' });
     }
+    // A second crawl of the same domain would interleave writes into the same dataset folder.
+    for (const [activeId, active] of jobs) {
+        if (!active.finishedAt && active.domain === domain) {
+            return JSON.stringify({
+                error: `A crawl of ${domain} is already in progress`,
+                job_id: activeId,
+            });
+        }
+    }
 
     const crawlArgs = [url];
     if (args.incremental) crawlArgs.push('--incremental');
@@ -454,8 +492,13 @@ function handleCrawl(args: Record<string, unknown>): string {
             job,
             crawlArgs,
             success => {
-                finishJob(job, success ? 'done' : 'failed (crawl error)');
                 recordCrawlResult(domain, success);
+                if (!success) return finishJob(job, 'failed (crawl error)');
+                if (!args.generate_findings) return finishJob(job, 'done');
+                job.status = 'generating findings';
+                generateFindings(job, domain, ok =>
+                    finishJob(job, ok ? 'done' : 'failed (findings error)')
+                );
             },
             envOverrides
         );
@@ -467,6 +510,56 @@ function handleCrawl(args: Record<string, unknown>): string {
         status: 'validating',
         message: `Crawl requested for ${url}; poll get_report with job_id for status`,
     });
+}
+
+// Runs the report scripts that write the per-check JSON files get_findings reads. Sequential:
+// both merge the same dataset JSONL first, and running them in parallel would race on it.
+function generateFindings(job: ICrawlJob, domain: string, onDone: (ok: boolean) => void) {
+    const steps: RunnerScript[] = ['report-seo-issues', 'report-404s'];
+    const next = (i: number) => {
+        if (i === steps.length) return onDone(true);
+        const runner = resolveRunner(steps[i]);
+        const proc = spawn(runner.cmd, [...runner.args, '--domain', domain], {
+            cwd: process.cwd(),
+            env: process.env,
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        proc.stdout.on('data', (d: Buffer) => pushLog(job, d.toString()));
+        proc.stderr.on('data', (d: Buffer) => pushLog(job, d.toString()));
+        proc.on('error', err => {
+            pushLog(job, `[server] Failed to start ${steps[i]}: ${err.message}\n`);
+            onDone(false);
+        });
+        proc.on('close', code => {
+            if (code !== 0) {
+                pushLog(job, `[server] ${steps[i]} exited with code ${code}\n`);
+                return onDone(false);
+            }
+            next(i + 1);
+        });
+    };
+    next(0);
+}
+
+function handleGetFindings(args: Record<string, unknown>): string {
+    const domain = String(args.domain ?? '')
+        .trim()
+        .toLowerCase()
+        .replace(/^www\./, '');
+    if (!isValidDomain(domain)) return JSON.stringify({ error: 'Invalid domain' });
+    const date = args.date === undefined ? undefined : String(args.date);
+    if (date !== undefined && !/^\d{2}-\d{2}-\d{4}$/.test(date)) {
+        return JSON.stringify({ error: 'date must be DD-MM-YYYY' });
+    }
+    const result = getFindings(path.join(STORAGE_DIR, 'reports'), domain, date);
+    if (!result) {
+        return JSON.stringify({
+            error: date
+                ? `No findings for ${domain} on ${date}`
+                : `No findings for ${domain}; run crawl with generate_findings first`,
+        });
+    }
+    return JSON.stringify(result);
 }
 
 function handleGetReport(args: Record<string, unknown>): string {
@@ -635,6 +728,7 @@ export function dispatch(method: string, params: Record<string, unknown>, id: un
         if (name === 'crawl') text = handleCrawl(args);
         else if (name === 'get_report') text = handleGetReport(args);
         else if (name === 'list_reports') text = handleListReports();
+        else if (name === 'get_findings') text = handleGetFindings(args);
         else
             return {
                 jsonrpc: '2.0',

@@ -965,9 +965,15 @@ It also integrates the AI persona **Marek** — a senior SEO consultant.
 ### Key MCP Features:
 
 1.  **Tools:**
-    - `crawl`: Trigger a crawl job asynchronously.
+    - `crawl`: Trigger a crawl job asynchronously. With `generate_findings: true` the job also runs
+      `report:seo-issues` and `report:404` and reports `done` only once the findings exist. A second
+      crawl of a domain that is still running is refused with the active `job_id`.
     - `get_report`: Retrieve report status or data for a domain.
     - `list_reports`: List all crawled domains and their audit dates.
+    - `get_findings`: Structured findings for a domain, grouped per check and kind (e.g.
+      `title:duplicate`), each with a severity, a stable `fingerprint`
+      (`seo:<domain>:<check>:<kind>`) and `newUrls` / `resolvedUrls` against the previous report
+      folder. Built for automated consumers such as a scheduled audit workflow.
 2.  **Prompts (Templates):**
     - `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`).
       Supports a `domain` argument which appends the latest crawl report as context.
