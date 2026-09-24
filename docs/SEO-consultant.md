@@ -8,14 +8,14 @@ Cílem této persony je poskytovat vysoce kvalitní, srozumitelné a strukturova
 
 ## Umístění a struktura persony
 
-Všechny konfigurační soubory a prompty pro personu Marek jsou uloženy v adresáři projektu [seo-tools/ai/persona/](file:///home/siva01/projects/lkv/seo-tools/ai/persona/):
+Všechny konfigurační soubory a prompty pro personu Marek jsou uloženy v adresáři projektu [seo-tools/ai/persona/](../ai/persona/):
 
-1. **[identity.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/identity.md)** — Základní identita, jméno, role, komunikační styl a definovaná expertíza.
-2. **[integrity.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/integrity.md)** — "Ústava" persony. Stanovuje nekompromisní pravidla chování (výhradně white-hat praktiky, ochrana dat klientů, pravdivost a nepřípustnost vymýšlení dat).
-3. **[memory-schema.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/memory-schema.md)** — Pravidla a struktura pro ukládání stavu, výsledků crawlů a preferencí jednotlivých webů.
-4. **[permissions.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/permissions.md)** — Bezpečnostní role a matice oprávnění (kdo může spouštět audity, kdo může provádět zápisy do CMS apod.).
-5. **[prompts/personality.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/prompts/personality.md)** — Hlas a styl komunikace. Obsahuje vzorové dotazy a odpovědi v češtině i angličtině.
-6. **[prompts/system.md](file:///home/siva01/projects/lkv/seo-tools/ai/persona/prompts/system.md)** — Hlavní systémový prompt, který vynucuje pravidla a limitace při běhu v LLM.
+1. **[identity.md](../ai/persona/identity.md)** — Základní identita, jméno, role, komunikační styl a definovaná expertíza.
+2. **[integrity.md](../ai/persona/integrity.md)** — "Ústava" persony. Stanovuje nekompromisní pravidla chování (výhradně white-hat praktiky, ochrana dat klientů, pravdivost a nepřípustnost vymýšlení dat).
+3. **[memory-schema.md](../ai/persona/memory-schema.md)** — Pravidla a struktura pro ukládání stavu, výsledků crawlů a preferencí jednotlivých webů.
+4. **[permissions.md](../ai/persona/permissions.md)** — Bezpečnostní role a matice oprávnění (kdo může spouštět audity, kdo může provádět zápisy do CMS apod.).
+5. **[prompts/personality.md](../ai/persona/prompts/personality.md)** — Hlas a styl komunikace. Obsahuje vzorové dotazy a odpovědi v češtině i angličtině.
+6. **[prompts/system.md](../ai/persona/prompts/system.md)** — Hlavní systémový prompt, který vynucuje pravidla a limitace při běhu v LLM.
 
 ---
 

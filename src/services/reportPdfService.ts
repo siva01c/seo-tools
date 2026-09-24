@@ -116,7 +116,7 @@ interface ITocEntry {
 
 function printStylesheet(): string {
     // A4 at 10pt with the inventory tables dropped to 8pt: section 3 of a real report is a
-    // 6-column table with one row per crawled page (187 on ludekkvapil.cz), so fixed layout
+    // 6-column table with one row per crawled page (~190 on a mid-size site), so fixed layout
     // plus word-break is what stops long URLs from blowing the columns apart.
     return `
 :root { color-scheme: light; }

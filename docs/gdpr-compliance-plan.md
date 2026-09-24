@@ -1,7 +1,7 @@
 # GDPR Compliance & Remediation Plan (`seo-tools`)
 
 **Project:** `seo-tools` (On-Page SEO Analyzer, Crawler, and MCP Server)  
-**Location:** `/home/siva01/projects/lkv/seo-tools`  
+**Location:** repository root  
 **Date:** July 18, 2026  
 **Status:** In Progress / Active Remediation  
 
@@ -42,7 +42,7 @@ graph TD
 ### Remediation Tasks
 - [ ] **Task 1.1:** Add a daily cron job in host server crontab or container entrypoint:
   ```bash
-  0 3 * * * cd /home/siva01/projects/lkv/seo-tools && docker compose run --rm app npm run purge-old-data -- --days 90
+  0 3 * * * cd /path/to/seo-tools && docker compose run --rm app npm run purge-old-data -- --days 90
   ```
 - [ ] **Task 1.2:** Log purging executions to `storage/logs/retention-purge.log` for auditability.
 - [ ] **Task 1.3:** Add unit/integration tests verifying `scripts/purge-old-data.ts` correctly deletes date folders older than 90 days without altering recent records.
@@ -55,9 +55,9 @@ graph TD
 The public lead-generation flow on `/api/crawl` accepts email addresses to deliver audit reports, but does not present a Privacy Policy, specify data controller contact details, or clarify storage duration.
 
 ### Remediation Tasks
-- [ ] **Task 2.1:** Publish a dedicated `PRIVACY.md` / `privacy-policy.html` served by the static frontend (`seo.ludekkvapil.cz`).
+- [ ] **Task 2.1:** Publish a dedicated `PRIVACY.md` / `privacy-policy.html` served by the static frontend (your deployment's domain).
 - [ ] **Task 2.2:** Update `src/mcp-server.ts` to include standard privacy headers or links in JSON API responses:
-  - Data Controller: `info@ludekkvapil.cz`
+  - Data Controller: the operator's contact address (e.g. `privacy@example.com`)
   - Purpose: One-time delivery of requested SEO report
   - Retention: In-memory for 24 hours (`JOB_TTL_MS`)
 - [ ] **Task 2.3:** Add link to the Privacy Policy directly below the email input field on the web UI.
@@ -87,7 +87,7 @@ Crawled web pages may contain personal data of third parties (e.g. author names,
   ```bash
   npx tsx scripts/purge-old-data.ts --domain targetdomain.com --days 0
   ```
-- [ ] **Task 4.3:** Set up a dedicated contact email (`privacy@ludekkvapil.cz` or `info@ludekkvapil.cz`) for receiving privacy inquiries.
+- [ ] **Task 4.3:** Set up a dedicated contact email for the operator (e.g. `privacy@example.com`) for receiving privacy inquiries.
 
 ---
 
