@@ -1,0 +1,42 @@
+# Match profile for scripts/match-cross-domain-content.ts
+#
+# Passed with --profile <path>. Every key is optional; anything omitted falls back to the
+# domain-neutral defaults built into the script, so a profile only has to state what is specific
+# to the two sites being matched.
+#
+#   docker compose run --rm app npm run report:content-mapping -- \
+#     --source example.com --target example.cz --source-path-prefix /en \
+#     --profile config/examples/match-profile.yml --csv
+#
+# Keep a real site's profile with that site's project, not in this repo — the values are the
+# client's vocabulary, and they change when their content does.
+
+# Path prefixes that are never content. Matched against the path with the site's language prefix
+# already removed, so write them as they appear after that prefix.
+nonContentPrefixes:
+  - /sites/
+  - /user
+  - /form
+  - /cart
+  - /media/
+  - /system/
+
+# Slug tails the source site appends but the target site drops. The matcher retries a slug with
+# each of these removed, so "/products/compact-air-filter-caf" can still meet "/produkty/caf".
+# Order does not matter; each is tried independently.
+slugQualifierSuffixes: []
+#   - -wall-mounted
+#   - -50hz
+#   - -60hz
+#   - -series
+
+# Words too generic to identify a page. Without them, the trailing-slug-token key matches every
+# page whose slug happens to end in the same common noun — the brand name is almost always worth
+# listing here, since it appears in most titles and identifies nothing.
+stopTokens:
+  - page
+  - pages
+  - product
+  - products
+  - index
+  - home

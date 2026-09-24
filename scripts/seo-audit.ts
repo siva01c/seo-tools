@@ -175,23 +175,57 @@ function isPdf(page: IPageRecord): boolean {
     return url.endsWith('.pdf') || contentType.includes('application/pdf');
 }
 
-function classifyPageType(page: IPageRecord): PageType {
+/** Share of pages a schema type must appear on before it stops telling us anything about any one
+ *  page. Site-wide entity markup (an Organization or LocalBusiness block in the layout) is normal
+ *  and good for SEO — it is just useless as a *classification* signal. */
+const UBIQUITOUS_SCHEMA_SHARE = 0.9;
+
+/**
+ * Schema types present on so many pages that they cannot distinguish between them.
+ *
+ * Sites routinely emit Organization/LocalBusiness/WebSite from a shared layout. Treating those as
+ * per-page evidence classified every page of such a site as Branch/Contact — homepage, blog posts
+ * and service pages alike — which made the whole inventory table meaningless.
+ */
+function ubiquitousSchemaTypes(pages: IPageRecord[]): Set<string> {
+    if (pages.length === 0) return new Set();
+    const counts = new Map<string, number>();
+    for (const page of pages) {
+        for (const type of extractJsonLdTypes(page)) {
+            counts.set(type, (counts.get(type) ?? 0) + 1);
+        }
+    }
+    const threshold = pages.length * UBIQUITOUS_SCHEMA_SHARE;
+    return new Set([...counts.entries()].filter(([, n]) => n >= threshold).map(([t]) => t));
+}
+
+/**
+ * Path first, then schema. The URL is authored per page and therefore always discriminating;
+ * schema may be templated across the whole site. Types listed in `ubiquitous` are ignored
+ * entirely — see ubiquitousSchemaTypes().
+ */
+function classifyPageType(page: IPageRecord, ubiquitous: Set<string> = new Set()): PageType {
     const path = new URL(page.url).pathname;
-    const jsonLdTypes = extractJsonLdTypes(page);
+    const jsonLdTypes = extractJsonLdTypes(page).filter(t => !ubiquitous.has(t));
+    const hasType = (...types: string[]): boolean => jsonLdTypes.some(t => types.includes(t));
 
-    if (jsonLdTypes.some(t => ['Article', 'BlogPosting', 'NewsArticle'].includes(t)))
-        return 'Article';
-    if (jsonLdTypes.some(t => ['LocalBusiness', 'PostalAddress'].includes(t)))
-        return 'Branch/Contact';
-    if (jsonLdTypes.some(t => t === 'FAQPage')) return 'FAQ';
-
+    // Unambiguous structural signals.
     if (path === '/' || path === '') return 'Homepage';
+
+    // Per-page content types: these mark one page's content, not the site's identity.
+    if (hasType('Article', 'BlogPosting', 'NewsArticle')) return 'Article';
+    if (hasType('FAQPage')) return 'FAQ';
+
+    // Authored path segments.
     if (/\/(kontakt|contact|pobocky|branch|location|poradna)/i.test(path)) return 'Branch/Contact';
     if (/\/(pojisteni|pojistovna|produkty|product|service|sluzby|nabidka)/i.test(path))
         return 'Service';
     if (/\/(faq|otazky|casto-kladene)/i.test(path)) return 'FAQ';
     if (/\/(o-nas|about|kdo-jsme|spolecnost|firma)/i.test(path)) return 'About';
     if (/\/\d{4}\/\d{2}\//.test(path)) return 'Article';
+
+    // Last resort: a contact-ish entity that is NOT site-wide really does suggest a branch page.
+    if (hasType('LocalBusiness', 'PostalAddress')) return 'Branch/Contact';
 
     return 'Generic';
 }
@@ -225,7 +259,7 @@ interface IPageAnalysis {
     issues: IPageIssue[];
 }
 
-function analyzePage(page: IPageRecord): IPageAnalysis {
+function analyzePage(page: IPageRecord, ubiquitousSchemas: Set<string> = new Set()): IPageAnalysis {
     const meta = page.seo?.metaTags ?? {};
     const specialLinks = page.seo?.specialLinks ?? {};
     const issues: IPageIssue[] = [];
@@ -265,7 +299,7 @@ function analyzePage(page: IPageRecord): IPageAnalysis {
     return {
         url: page.url,
         title,
-        pageType: classifyPageType(page),
+        pageType: classifyPageType(page, ubiquitousSchemas),
         isIndexable,
         hasCanonical: !!canonical,
         canonicalUrl: canonical,
@@ -304,9 +338,29 @@ function mdLink(url: string): string {
     return /^https?:\/\//i.test(url) ? `[${escaped}](${escaped})` : escaped;
 }
 
+/**
+ * A share, rounded — but never rounded into a lie.
+ *
+ * These tables carry both "how many pages have this problem" and "how many pass this check", so
+ * integer rounding fails at both ends: on a 311-page site a single broken page is 0.32%, which
+ * printed as `0%` in the issue rows and let the pass rows claim `100%` coverage. Either way the
+ * one page that mattered vanished. Exact 0 and exact `total` still print as `0%`/`100%`, because
+ * there the claim is true.
+ */
 function pct(n: number, total: number): string {
-    return total === 0 ? '0%' : `${Math.round((n / total) * 100)}%`;
+    if (total === 0 || n === 0) return '0%';
+    if (n === total) return '100%';
+    const raw = (n / total) * 100;
+    const rounded = Math.round(raw);
+    if (rounded === 0 || rounded === 100) return `${raw.toFixed(1)}%`;
+    return `${rounded}%`;
 }
+
+/** Worst first, so a truncated issue cell always leads with the most severe one. */
+const ISSUE_ORDER: Record<IPageIssue['severity'], number> = { critical: 0, warning: 1, info: 2 };
+
+/** Issue messages per inventory row; beyond this the cell stops being readable in a table. */
+const MAX_ISSUES_IN_CELL = 2;
 
 function severityIcon(s: IPageIssue['severity']): string {
     return s === 'critical' ? '🔴' : s === 'warning' ? '🟡' : 'ℹ️';
@@ -728,12 +782,12 @@ function renderMarkdown(
 
 ### ${m.hKeyFindings}
 
-${missingSchema > 0 ? m.fNoJsonLd(missingSchema) : m.fAllJsonLd}
+${missingSchema > 0 ? m.fNoJsonLd(missingSchema, total) : m.fAllJsonLd}
 ${!allJsonLdTypes.includes('Organization') ? m.fNoOrg : m.fOrgDefined}
-${missingDesc > 0 ? m.fMissingDesc(missingDesc) : m.fAllDesc}
-${noCanonical > 0 ? m.fNoCanonical(noCanonical) : m.fAllCanonical}
-${orphans > 0 ? m.fOrphans(orphans) : m.fNoOrphans}
-${notIndexable > 0 ? m.fNotIndexable(notIndexable) : m.fAllIndexable}
+${missingDesc > 0 ? m.fMissingDesc(missingDesc, total) : m.fAllDesc}
+${noCanonical > 0 ? m.fNoCanonical(noCanonical, total) : m.fAllCanonical}
+${orphans > 0 ? m.fOrphans(orphans, total) : m.fNoOrphans}
+${notIndexable > 0 ? m.fNotIndexable(notIndexable, total) : m.fAllIndexable}
 
 ---
 
@@ -756,10 +810,16 @@ ${Object.entries(pageTypeCounts)
 |-----|------|-----------|-----------|--------------|--------|
 ${analyses
     .map(a => {
-        const crits = a.issues.filter(i => i.severity === 'critical').length;
-        const warns = a.issues.filter(i => i.severity === 'warning').length;
-        const issueStr =
-            crits > 0 ? m.issueCellCritical(crits) : warns > 0 ? m.issueCellWarn(warns) : '✅';
+        // Name the issues rather than counting them. "🟡 1 warn" told the reader a page had a
+        // problem but not which, so every flagged row needed a manual re-check against the site.
+        const ranked = [...a.issues].sort(
+            (x, y) => ISSUE_ORDER[x.severity] - ISSUE_ORDER[y.severity]
+        );
+        const shown = ranked.slice(0, MAX_ISSUES_IN_CELL).map(i => i.message);
+        const extra = ranked.length - shown.length;
+        const issueStr = ranked.length
+            ? `${severityIcon(ranked[0].severity)} ${shown.join('; ')}${extra > 0 ? ` ${m.issueCellMore(extra)}` : ''}`
+            : '✅';
         const shortUrl = mdEscapeUrl(a.url.replace(/^https?:\/\/[^/]+/, '').slice(0, 55) || '/');
         const schemas = a.jsonLdTypes.slice(0, 3).join(', ') || '—';
         return `| \`${shortUrl}\` | ${m.pageType[a.pageType] ?? a.pageType} | ${a.isIndexable ? '✅' : '🔴'} | ${a.hasCanonical ? '✅' : '🟡'} | ${schemas} | ${issueStr} |`;
@@ -1118,7 +1178,10 @@ const main = (): void => {
         }
 
         console.log('🔬 Analyzing pages...');
-        const analyses = pages.map(analyzePage);
+        // Computed once over the whole crawl: a schema type on nearly every page cannot tell
+        // one page from another, so it must not drive classification.
+        const ubiquitousSchemas = ubiquitousSchemaTypes(pages);
+        const analyses = pages.map(page => analyzePage(page, ubiquitousSchemas));
 
         const keywordPositions = parseKeywordPositions(domain);
         if (keywordPositions.length > 0) {

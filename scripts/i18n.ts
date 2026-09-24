@@ -35,6 +35,26 @@ export const withSuffix = (filename: string, lang: Lang): string => {
     return dot === -1 ? `${filename}${s}` : `${filename.slice(0, dot)}${s}${filename.slice(dot)}`;
 };
 
+/**
+ * "1 of 311 pages (0.3%)" — the count, the base and the share in one phrase.
+ *
+ * A finding that says only "1 pages" forces the reader to scroll back for the total, reads wrong
+ * in the singular, and lets a one-page problem and a site-wide one sound identical. Sharing the
+ * denominator inline lets the severity speak for itself, so the prose does not have to.
+ */
+const share = (n: number, total: number): string =>
+    total === 0 ? '0%' : `${((n / total) * 100).toFixed(1).replace(/\.0$/, '')}%`;
+
+// In "N of M pages" the noun agrees with M, not N — "1 of 311 pages", never "1 of 311 page".
+// Czech behaves the same way: "z" governs the genitive plural, so it is always "stránek".
+// The findings below are phrased as noun phrases with a colon rather than as clauses, so no
+// verb has to agree with N either ("1 of 311 pages: no JSON-LD", not "1 pages have no JSON-LD").
+const enPages = (n: number, total: number): string => `${n} of ${total} pages (${share(n, total)})`;
+
+const csPages = (n: number, total: number): string =>
+    // Czech writes the decimal separator as a comma.
+    `${n} z ${total} stránek (${share(n, total).replace('.', ',')})`;
+
 // ── Message shapes ─────────────────────────────────────────────────────────────
 
 export interface ISeoAuditMessages {
@@ -98,18 +118,20 @@ export interface ISeoAuditMessages {
     rowNotIndexable: string;
     rowThin: string;
 
-    // Key findings (positive / negative variants)
-    fNoJsonLd: (n: number) => string;
+    // Key findings (positive / negative variants). Each takes the total as well as the count:
+    // "1 page" out of 311 and "300 pages" out of 311 are different findings, and prose that reads
+    // the same for both ("severely limited") overstates the small case and understates the large.
+    fNoJsonLd: (n: number, total: number) => string;
     fAllJsonLd: string;
     fNoOrg: string;
     fOrgDefined: string;
-    fMissingDesc: (n: number) => string;
+    fMissingDesc: (n: number, total: number) => string;
     fAllDesc: string;
-    fNoCanonical: (n: number) => string;
+    fNoCanonical: (n: number, total: number) => string;
     fAllCanonical: string;
-    fOrphans: (n: number) => string;
+    fOrphans: (n: number, total: number) => string;
     fNoOrphans: string;
-    fNotIndexable: (n: number) => string;
+    fNotIndexable: (n: number, total: number) => string;
     fAllIndexable: string;
 
     // Scope
@@ -205,8 +227,8 @@ export interface ISeoAuditMessages {
     // Page-type display labels (internal keys stay English)
     pageType: Record<string, string>;
     // Issue-cell short labels
-    issueCellCritical: (n: number) => string;
-    issueCellWarn: (n: number) => string;
+    /** Suffix when an inventory cell shows only the first few of a page's issues. */
+    issueCellMore: (n: number) => string;
 
     // Priority / Impact / Effort values
     levHigh: string;
@@ -344,6 +366,17 @@ export interface ITitleDescriptionFixesMessages {
     sumWritten: string;
 }
 
+export interface IContentMappingMessages {
+    csvHeader: string[];
+    sumHeader: string;
+    sumSourcePages: string;
+    sumTargetPages: string;
+    sumMatched: string;
+    sumMissing: string;
+    sumTargetOnly: string;
+    sumWritten: string;
+}
+
 /**
  * Shared across every report script: how the crawl slice being reported on is announced.
  * Reports describe the newest crawl by default, so they must say which crawl that was and
@@ -368,6 +401,7 @@ export interface IMessages {
     linkGraphIssues: ILinkGraphIssuesMessages;
     sitemapIssues: ISitemapIssuesMessages;
     titleDescriptionFixes: ITitleDescriptionFixesMessages;
+    contentMapping: IContentMappingMessages;
 }
 
 // ── English ────────────────────────────────────────────────────────────────────
@@ -434,20 +468,21 @@ const en: IMessages = {
         rowOrphans: 'Orphan pages (0 internal links)',
         rowNotIndexable: 'Not indexable',
         rowThin: 'Thin content (< 300 words)',
-        fNoJsonLd: n =>
-            `- ⚠️ **${n} pages** have no JSON-LD — machine readability is severely limited`,
+        fNoJsonLd: (n, total) => `- ⚠️ **${enPages(n, total)}**: no JSON-LD — not machine-readable`,
         fAllJsonLd: '- ✅ All pages have some JSON-LD structured data',
         fNoOrg: '- 🔴 **No Organization schema** — AI systems and search engines cannot reliably identify the business entity',
         fOrgDefined: '- ✅ Organization entity defined',
-        fMissingDesc: n =>
-            `- ⚠️ **${n} pages** missing meta descriptions — poor CTR in search results`,
+        fMissingDesc: (n, total) =>
+            `- ⚠️ **${enPages(n, total)}**: no meta description — search engines will write their own snippet`,
         fAllDesc: '- ✅ All pages have meta descriptions',
-        fNoCanonical: n => `- ⚠️ **${n} pages** lack canonical tags — duplicate content risk`,
+        fNoCanonical: (n, total) =>
+            `- ⚠️ **${enPages(n, total)}**: no canonical tag — duplicate content risk`,
         fAllCanonical: '- ✅ All pages have canonical tags',
-        fOrphans: n => `- ⚠️ **${n} pages** have zero internal links — invisible to crawlers`,
+        fOrphans: (n, total) =>
+            `- ⚠️ **${enPages(n, total)}**: no internal links — reachable only via the sitemap`,
         fNoOrphans: '- ✅ No orphan pages detected',
-        fNotIndexable: n =>
-            `- 🔴 **${n} pages** not indexable — verify robots meta and HTTP status`,
+        fNotIndexable: (n, total) =>
+            `- 🔴 **${enPages(n, total)}**: not indexable — verify robots meta and HTTP status`,
         fAllIndexable: '- ✅ All pages are indexable',
         lblDomain: 'Domain',
         lblCrawlDatesIncluded: 'Crawl dates included',
@@ -529,8 +564,7 @@ const en: IMessages = {
             About: 'About',
             Generic: 'Generic',
         },
-        issueCellCritical: n => `🔴 ${n} critical`,
-        issueCellWarn: n => `🟡 ${n} warn`,
+        issueCellMore: n => `(+${n} more)`,
         levHigh: 'High',
         levMedium: 'Medium',
         levLow: 'Low',
@@ -690,6 +724,26 @@ const en: IMessages = {
         sumGenerated: 'Fixes generated',
         sumWritten: 'Reports written to',
     },
+    contentMapping: {
+        csvHeader: [
+            'source_url',
+            'source_title',
+            'source_section',
+            'target_url',
+            'target_title',
+            'match_method',
+            'confidence',
+            'status',
+            'notes',
+        ],
+        sumHeader: '📊 Summary',
+        sumSourcePages: 'Source pages',
+        sumTargetPages: 'Target pages',
+        sumMatched: 'Matched',
+        sumMissing: 'Missing on target',
+        sumTargetOnly: 'Only on target',
+        sumWritten: 'Reports written to',
+    },
 };
 
 // ── Czech ────────────────────────────────────────────────────────────────────
@@ -756,21 +810,22 @@ const cs: IMessages = {
         rowOrphans: 'Osamocené stránky (0 interních odkazů)',
         rowNotIndexable: 'Neindexovatelné',
         rowThin: 'Tenký obsah (< 300 slov)',
-        fNoJsonLd: n =>
-            `- ⚠️ **${n} stránek** nemá JSON-LD — strojová čitelnost je výrazně omezená`,
+        fNoJsonLd: (n, total) =>
+            `- ⚠️ **${csPages(n, total)}**: chybí JSON-LD — strojově nečitelné`,
         fAllJsonLd: '- ✅ Všechny stránky mají nějaká strukturovaná data JSON-LD',
         fNoOrg: '- 🔴 **Chybí schéma Organization** — AI systémy ani vyhledávače nedokážou spolehlivě identifikovat firemní entitu',
         fOrgDefined: '- ✅ Entita Organization je definována',
-        fMissingDesc: n =>
-            `- ⚠️ **${n} stránkám** chybí meta popis — nízký CTR ve výsledcích vyhledávání`,
+        fMissingDesc: (n, total) =>
+            `- ⚠️ **${csPages(n, total)}**: chybí meta popis — vyhledávač si úryvek napíše sám`,
         fAllDesc: '- ✅ Všechny stránky mají meta popis',
-        fNoCanonical: n =>
-            `- ⚠️ **${n} stránkám** chybí kanonické tagy — riziko duplicitního obsahu`,
+        fNoCanonical: (n, total) =>
+            `- ⚠️ **${csPages(n, total)}**: chybí kanonický tag — riziko duplicitního obsahu`,
         fAllCanonical: '- ✅ Všechny stránky mají kanonické tagy',
-        fOrphans: n => `- ⚠️ **${n} stránek** nemá žádné interní odkazy — neviditelné pro roboty`,
+        fOrphans: (n, total) =>
+            `- ⚠️ **${csPages(n, total)}**: žádné interní odkazy — dostupné jen ze sitemapy`,
         fNoOrphans: '- ✅ Nebyly nalezeny žádné osamocené stránky',
-        fNotIndexable: n =>
-            `- 🔴 **${n} stránek** není indexovatelných — zkontrolujte robots meta a HTTP stav`,
+        fNotIndexable: (n, total) =>
+            `- 🔴 **${csPages(n, total)}**: neindexovatelné — zkontrolujte robots meta a HTTP stav`,
         fAllIndexable: '- ✅ Všechny stránky jsou indexovatelné',
         lblDomain: 'Doména',
         lblCrawlDatesIncluded: 'Zahrnuté dny crawlu',
@@ -853,8 +908,7 @@ const cs: IMessages = {
             About: 'O nás',
             Generic: 'Obecná',
         },
-        issueCellCritical: n => `🔴 ${n} kritických`,
-        issueCellWarn: n => `🟡 ${n} varování`,
+        issueCellMore: n => `(+${n} dalších)`,
         levHigh: 'Vysoká',
         levMedium: 'Střední',
         levLow: 'Nízká',
@@ -1029,6 +1083,26 @@ const cs: IMessages = {
         ],
         sumHeader: '📊 Souhrn',
         sumGenerated: 'Vygenerováno oprav',
+        sumWritten: 'Reporty zapsány do',
+    },
+    contentMapping: {
+        csvHeader: [
+            'zdrojova_url',
+            'zdrojovy_titulek',
+            'zdrojova_sekce',
+            'cilova_url',
+            'cilovy_titulek',
+            'zpusob_parovani',
+            'jistota',
+            'stav',
+            'poznamka',
+        ],
+        sumHeader: '📊 Souhrn',
+        sumSourcePages: 'Zdrojových stránek',
+        sumTargetPages: 'Cílových stránek',
+        sumMatched: 'Spárováno',
+        sumMissing: 'Chybí na cílovém webu',
+        sumTargetOnly: 'Pouze na cílovém webu',
         sumWritten: 'Reporty zapsány do',
     },
 };

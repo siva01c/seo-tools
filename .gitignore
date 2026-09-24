@@ -11,5 +11,7 @@ storage
 # Added by Apify CLI
 .venv
 .env
+# Local deployment overlay (e.g. attaching the MCP server to a shared network)
+docker-compose.override.yml
 # Deployment-specific patterns for scripts/check-no-internal-refs.sh (never published)
 .internal-refs
