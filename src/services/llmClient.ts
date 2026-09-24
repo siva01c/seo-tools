@@ -188,7 +188,7 @@ counterpart on a Czech website. The two sites share content but use translated t
 slugs, so match on meaning, not on wording. Rules:
 - Pick a candidate only if it is the SAME page — the same product, the same case study, the same
   article — not merely a related or same-category page.
-- Product model codes (MFD, SBT, KUA-160, FAN-28, DraftMax Eco) are decisive: they are not
+- Product model codes (e.g. CAF, XR-200, KX-160) are decisive: they are not
   translated, so a shared code is strong evidence and a conflicting code rules a candidate out.
 - Much of the English site has no Czech counterpart at all. Answering null is expected and
   correct in that case — never stretch to the nearest topic.

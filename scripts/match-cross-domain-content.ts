@@ -11,7 +11,7 @@
  *   A. `--alias-map` — a CSV of source-alias/target-alias pairs exported from the CMS that owns
  *      both language versions. Authoritative: it comes from the content model, not from guessing.
  *   B. Deterministic keys — matching titles, matching slugs, and product model codes, which
- *      survive translation (MFD, SBT, KUA-160) and are decisive when they agree.
+ *      survive translation (e.g. CAF, XR-200, KX-160) and are decisive when they agree.
  *   C. The LLM, for whatever is left, choosing from the still-unmatched target pages.
  *
  * Every pass is allowed to answer "no counterpart": on a partially translated site that is the
@@ -304,7 +304,7 @@ const normalize = (value: string | undefined): string =>
 
 const lastSegment = (path: string): string => path.split('/').filter(Boolean).pop() ?? '';
 
-/** Title with the site-name tail removed — "MFD | Plymovent" and "MFD - Plymovent.cz" both to "mfd". */
+/** Title with the site-name tail removed — "CAF | Example" and "CAF - Example.cz" both to "caf". */
 const titleHead = (title: string | undefined): string =>
     normalize((title ?? '').split('|')[0].split(' - ')[0]);
 
@@ -326,12 +326,12 @@ function matchKeys(page: Page, path: string, pathPrefix: string): Set<string> {
     add(normalize(relative));
 
     // Model codes are written in parentheses on one site and used bare on the other:
-    // "Sliding Balancer Track (SBT)" against a page simply titled "SBT".
+    // "Compact Air Filter (CAF)" against a page simply titled "CAF".
     for (const match of (page.title ?? '').matchAll(/\(([A-Za-z0-9/-]{2,12})\)/g)) {
         add(normalize(match[1]));
     }
 
-    // ...or appended to the slug: /products/sliding-balancer-track-sbt against /produkty/sbt.
+    // ...or appended to the slug: /products/compact-air-filter-caf against /produkty/caf.
     const tokens = slug.split('-');
     if (tokens.length > 1) add(normalize(tokens[tokens.length - 1]));
     if (tokens.length > 2) add(normalize(tokens.slice(-2).join('-')));

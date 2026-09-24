@@ -22,10 +22,10 @@ nonContentPrefixes:
   - /system/
 
 # Slug tails the source site appends but the target site drops. The matcher retries a slug with
-# each of these removed, so "/products/sliding-balancer-track-sbt" can still meet "/produkty/sbt".
+# each of these removed, so "/products/compact-air-filter-caf" can still meet "/produkty/caf".
 # Order does not matter; each is tried independently.
 slugQualifierSuffixes: []
-#   - -extension-crane
+#   - -wall-mounted
 #   - -50hz
 #   - -60hz
 #   - -series
