@@ -10,7 +10,7 @@ import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { checkUrlIsSafeToRequest } from './services/ssrfGuard.js';
 import { ensureReportPdf } from './services/reportPdfService.js';
-import { getFindings, isValidDomain } from './services/findingsService.js';
+import { getFindings, isValidDomain, normaliseDomain } from './services/findingsService.js';
 
 const PORT = parseInt(process.env.MCP_PORT ?? '3001', 10);
 const SEO_MCP_TOKEN = process.env.SEO_MCP_TOKEN ?? '';
@@ -78,6 +78,16 @@ function pushLog(job: ICrawlJob, line: string) {
 function finishJob(job: ICrawlJob, status: string) {
     job.status = status;
     job.finishedAt = Date.now();
+}
+
+// The unfinished job for a domain, whatever phase it is in (validating, running, auditing,
+// generating findings). Every entry point asks this one question, so a new phase cannot slip
+// past one of them.
+function findActiveJob(domain: string): [string, ICrawlJob] | null {
+    for (const entry of jobs) {
+        if (!entry[1].finishedAt && entry[1].domain === domain) return entry;
+    }
+    return null;
 }
 
 function activeCrawlCount(): number {
@@ -217,7 +227,7 @@ function validateCrawlTarget(rawUrl: string): Promise<string | null> {
 
 // ── Crawler process runner (compiled dist in production, tsx in dev) ─────────
 
-type RunnerScript = 'crawl' | 'seo-audit' | 'report-seo-issues' | 'report-404s';
+type RunnerScript = 'crawl' | 'seo-audit' | 'report-seo-issues' | 'report-404s' | 'build-findings';
 
 function resolveRunner(script: RunnerScript): { cmd: string; args: string[] } {
     const distCandidates =
@@ -441,22 +451,26 @@ function handleCrawl(args: Record<string, unknown>): string {
 
     let domain: string;
     try {
-        domain = new URL(url).hostname.replace(/^www\./, '');
+        domain = normaliseDomain(new URL(url).hostname);
     } catch {
         return JSON.stringify({ error: 'Invalid URL' });
+    }
+    const generateFindingsRequested = args.generate_findings === true;
+    // get_findings only accepts hostname-shaped domains; fail now rather than after the crawl.
+    if (generateFindingsRequested && !isValidDomain(domain)) {
+        return JSON.stringify({ error: 'generate_findings needs a hostname, not an IP address' });
     }
 
     if (activeCrawlCount() >= MAX_CONCURRENT_CRAWLS) {
         return JSON.stringify({ error: 'Too many crawls in progress, try again later' });
     }
     // A second crawl of the same domain would interleave writes into the same dataset folder.
-    for (const [activeId, active] of jobs) {
-        if (!active.finishedAt && active.domain === domain) {
-            return JSON.stringify({
-                error: `A crawl of ${domain} is already in progress`,
-                job_id: activeId,
-            });
-        }
+    const active = findActiveJob(domain);
+    if (active) {
+        return JSON.stringify({
+            error: `A crawl of ${domain} is already in progress`,
+            job_id: active[0],
+        });
     }
 
     const crawlArgs = [url];
@@ -494,7 +508,7 @@ function handleCrawl(args: Record<string, unknown>): string {
             success => {
                 recordCrawlResult(domain, success);
                 if (!success) return finishJob(job, 'failed (crawl error)');
-                if (!args.generate_findings) return finishJob(job, 'done');
+                if (!generateFindingsRequested) return finishJob(job, 'done');
                 job.status = 'generating findings';
                 generateFindings(job, domain, ok =>
                     finishJob(job, ok ? 'done' : 'failed (findings error)')
@@ -512,41 +526,93 @@ function handleCrawl(args: Record<string, unknown>): string {
     });
 }
 
-// Runs the report scripts that write the per-check JSON files get_findings reads. Sequential:
-// both merge the same dataset JSONL first, and running them in parallel would race on it.
+// Per report step. A healthy run takes seconds to a couple of minutes even on a large site;
+// the cap only exists so a hung script cannot hold the job, its concurrency slot and the
+// domain's same-domain guard forever.
+const FINDINGS_STEP_TIMEOUT_MS = parseInt(
+    process.env.SEO_FINDINGS_STEP_TIMEOUT_MS ?? String(10 * 60 * 1000),
+    10
+);
+
+// Runs one report script as a child process and calls `onDone` exactly once — a spawn failure
+// emits both `error` and `close`, and a timeout kills the child before `close` fires.
+function runStep(
+    job: ICrawlJob,
+    script: RunnerScript,
+    args: string[],
+    onDone: (ok: boolean) => void
+) {
+    const runner = resolveRunner(script);
+    let settled = false;
+    const settle = (ok: boolean, message?: string) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (message) pushLog(job, message);
+        onDone(ok);
+    };
+    const proc = spawn(runner.cmd, [...runner.args, ...args], {
+        cwd: process.cwd(),
+        env: process.env,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const timer = setTimeout(() => {
+        proc.kill('SIGTERM');
+        settle(false, `[server] ${script} exceeded ${FINDINGS_STEP_TIMEOUT_MS}ms; terminated.\n`);
+    }, FINDINGS_STEP_TIMEOUT_MS);
+    proc.stdout.on('data', (d: Buffer) => pushLog(job, d.toString()));
+    proc.stderr.on('data', (d: Buffer) => pushLog(job, d.toString()));
+    proc.on('error', err => settle(false, `[server] Failed to start ${script}: ${err.message}\n`));
+    proc.on('close', code =>
+        code === 0 ? settle(true) : settle(false, `[server] ${script} exited with code ${code}\n`)
+    );
+}
+
+// Newest DD-MM-YYYY dataset folder of a domain: the crawl that just finished.
+function latestDatasetDate(domain: string): string | null {
+    const dir = path.join(STORAGE_DIR, 'datasets', domain);
+    const [latest] = getSortedDateFolders(dir);
+    return latest ?? null;
+}
+
+// Writes the findings for the crawl that just finished: both report scripts into ONE folder
+// named after the crawl's dataset date (they would otherwise each derive their own), then the
+// compact findings.json. Sequential — both merge the same dataset JSONL first. The index is
+// written last, so a folder without it is incomplete and get_findings ignores it.
 function generateFindings(job: ICrawlJob, domain: string, onDone: (ok: boolean) => void) {
-    const steps: RunnerScript[] = ['report-seo-issues', 'report-404s'];
+    const date = latestDatasetDate(domain);
+    if (!date) {
+        pushLog(job, `[server] No dataset folder for ${domain}; nothing to report on.\n`);
+        return onDone(false);
+    }
+    const dir = path.join('storage', 'reports', domain, date);
+    const steps: [RunnerScript, string[]][] = [
+        ['report-seo-issues', ['--domain', domain, '--output-dir', dir]],
+        [
+            'report-404s',
+            ['--domain', domain, '--output', path.join(dir, `404-link-report-${date}.json`)],
+        ],
+        ['build-findings', ['--domain', domain, '--date', date]],
+    ];
     const next = (i: number) => {
         if (i === steps.length) return onDone(true);
-        const runner = resolveRunner(steps[i]);
-        const proc = spawn(runner.cmd, [...runner.args, '--domain', domain], {
-            cwd: process.cwd(),
-            env: process.env,
-            stdio: ['ignore', 'pipe', 'pipe'],
-        });
-        proc.stdout.on('data', (d: Buffer) => pushLog(job, d.toString()));
-        proc.stderr.on('data', (d: Buffer) => pushLog(job, d.toString()));
-        proc.on('error', err => {
-            pushLog(job, `[server] Failed to start ${steps[i]}: ${err.message}\n`);
-            onDone(false);
-        });
-        proc.on('close', code => {
-            if (code !== 0) {
-                pushLog(job, `[server] ${steps[i]} exited with code ${code}\n`);
-                return onDone(false);
-            }
-            next(i + 1);
-        });
+        runStep(job, steps[i][0], steps[i][1], ok => (ok ? next(i + 1) : onDone(false)));
     };
     next(0);
 }
 
 function handleGetFindings(args: Record<string, unknown>): string {
-    const domain = String(args.domain ?? '')
-        .trim()
-        .toLowerCase()
-        .replace(/^www\./, '');
+    const domain = normaliseDomain(String(args.domain ?? ''));
     if (!isValidDomain(domain)) return JSON.stringify({ error: 'Invalid domain' });
+    // Mid-crawl the newest complete report is the previous one; saying so beats returning it
+    // as if it were current.
+    const active = findActiveJob(domain);
+    if (active) {
+        return JSON.stringify({
+            error: `A crawl of ${domain} is in progress (${active[1].status}); poll get_report and retry when it is done`,
+            job_id: active[0],
+        });
+    }
     const date = args.date === undefined ? undefined : String(args.date);
     if (date !== undefined && !/^\d{2}-\d{2}-\d{4}$/.test(date)) {
         return JSON.stringify({ error: 'date must be DD-MM-YYYY' });
@@ -593,7 +659,8 @@ function handleGetReport(args: Record<string, unknown>): string {
     const files = fs.readdirSync(reportPath);
 
     // Try to read a summary file if present
-    const summaryFile = files.find(f => f.endsWith('.json') || f.endsWith('.jsonl'));
+    // Only a JSONL is one record per line; the findings JSON files are pretty-printed.
+    const summaryFile = files.find(f => f.endsWith('.jsonl'));
     let pageCount = 0;
     if (summaryFile) {
         const content = fs.readFileSync(path.join(reportPath, summaryFile), 'utf8');
@@ -1253,24 +1320,24 @@ const server = http.createServer(async (req, res) => {
             }
 
             // 2. Check if a crawl job is currently running or auditing for this domain
-            let activeJobId: string | null = null;
-            let activeJob: any = null;
-            for (const [id, j] of jobs.entries()) {
-                if (j.domain === domain && (j.status === 'running' || j.status === 'auditing')) {
-                    activeJobId = id;
-                    activeJob = j;
-                    break;
-                }
+            const active = findActiveJob(domain);
+            // An MCP crawl has no email flow to attach to; a second crawl would interleave
+            // writes into the same dataset folder, so the public request has to wait.
+            if (active && active[1].email === undefined) {
+                return send(409, {
+                    error: 'A crawl of this domain is already in progress, try again later',
+                });
             }
+            const [activeJobId, activeJob] = active ?? [null, null];
 
             if (activeJobId && activeJob) {
                 console.log(
                     `[mcp-server] Crawl already running for ${domain}. Attaching email ${emailInput}.`
                 );
                 if (emailInput) {
-                    activeJob.emails ??= [activeJob.email];
-                    if (!activeJob.emails.includes(emailInput)) {
-                        activeJob.emails.push(emailInput);
+                    const emails = (activeJob.emails ??= activeJob.email ? [activeJob.email] : []);
+                    if (!emails.includes(emailInput)) {
+                        emails.push(emailInput);
                     }
                 }
                 return send(200, { success: true, job_id: activeJobId, domain, attached: true });

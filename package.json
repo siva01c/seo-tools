@@ -47,6 +47,7 @@
     "merge:dedup": "tsx scripts/merge-dedup.ts",
     "report:404": "tsx scripts/report-404s.ts",
     "report:seo-issues": "tsx scripts/report-seo-issues.ts",
+    "report:findings": "tsx scripts/build-findings.ts",
     "seo-audit": "tsx scripts/seo-audit.ts",
     "report:pdf": "tsx scripts/report-pdf.ts",
     "report:content-mapping": "tsx scripts/match-cross-domain-content.ts",

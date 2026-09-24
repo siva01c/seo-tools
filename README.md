@@ -496,7 +496,7 @@ translated URL slugs, so there is no shared key — three passes run strongest-f
    `system_path,source_alias,target_alias`. Authoritative, and a pair is only accepted once both
    URLs are confirmed present in their crawl.
 2. **Deterministic keys** — matching titles and slugs, plus product model codes, which survive
-   translation (`Sliding Balancer Track (SBT)` ↔ a page simply titled `SBT`). Ambiguous keys are
+   translation (`Compact Air Filter (CAF)` ↔ a page simply titled `CAF`). Ambiguous keys are
    skipped.
 3. **LLM** — picks from the still-unmatched target pages, and may answer "no counterpart", which on
    a partially translated site is usually the correct answer. Uses the same `LLM_*` env vars as
@@ -966,14 +966,22 @@ It also integrates the AI persona **Marek** — a senior SEO consultant.
 
 1.  **Tools:**
     - `crawl`: Trigger a crawl job asynchronously. With `generate_findings: true` the job also runs
-      `report:seo-issues` and `report:404` and reports `done` only once the findings exist. A second
-      crawl of a domain that is still running is refused with the active `job_id`.
+      `report:seo-issues` and `report:404` into one folder named after the crawl's dataset date,
+      then `report:findings`, and reports `done` only once the findings exist (each step is capped
+      by `SEO_FINDINGS_STEP_TIMEOUT_MS`, default 10 min). A second crawl of a domain that is still
+      in any phase is refused with the active `job_id`, on this tool and on `/api/crawl` alike.
     - `get_report`: Retrieve report status or data for a domain.
     - `list_reports`: List all crawled domains and their audit dates.
     - `get_findings`: Structured findings for a domain, grouped per check and kind (e.g.
       `title:duplicate`), each with a severity, a stable `fingerprint`
       (`seo:<domain>:<check>:<kind>`) and `newUrls` / `resolvedUrls` against the previous report
-      folder. Built for automated consumers such as a scheduled audit workflow.
+      folder. Built for automated consumers such as a scheduled audit workflow. It reads only the
+      compact `findings.json` that `report:findings` writes last into a report folder — that file is
+      also the folder's completion marker, so incomplete folders are ignored. Only checks both
+      reports could read are diffed (`checksPresent` / `checksMissing`), so a check that failed to
+      generate never shows up as resolved. Refused while a crawl of the domain is in progress. To
+      index a folder produced before findings existed:
+      `npm run report:findings -- --domain example.com --date 28-08-2026`.
 2.  **Prompts (Templates):**
     - `seo-consultant-marek`: Exposes Marek's persona instructions (compiled from `./ai/persona/*`).
       Supports a `domain` argument which appends the latest crawl report as context.
