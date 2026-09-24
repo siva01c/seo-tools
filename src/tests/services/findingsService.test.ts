@@ -254,7 +254,7 @@ describe('findingsService', () => {
     });
 
     it('accepts only hostname-shaped domains', () => {
-        expect(isValidDomain('ludekkvapil.cz')).toBe(true);
+        expect(isValidDomain('example.cz')).toBe(true);
         expect(isValidDomain('sub.example.co.uk')).toBe(true);
         expect(isValidDomain('../etc')).toBe(false);
         expect(isValidDomain('example.com/../../x')).toBe(false);

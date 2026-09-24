@@ -995,7 +995,7 @@ It also integrates the AI persona **Marek** — a senior SEO consultant.
   port `3000` on the `mcp` service).
 - **Locally:** `bash   npm run mcp   ` Requires setting `SEO_MCP_TOKEN` in `.env` for Basic
   Authorization (if configured). For more details on the persona's role and rules, see
-  [docs/SEO-consultant.md](file:///home/siva01/projects/lkv/seo-tools/docs/SEO-consultant.md).
+  [docs/SEO-consultant.md](docs/SEO-consultant.md).
 
 ## 📈 Performance Tips
 

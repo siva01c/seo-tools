@@ -36,7 +36,7 @@ describe('MCP Server Integration Tests - Marek Persona', () => {
                             {
                                 name: 'domain',
                                 description:
-                                    'Volitelná doména pro připojení aktuálních auditních dat (např. ludekkvapil.cz)',
+                                    'Volitelná doména pro připojení aktuálních auditních dat (např. example.com)',
                                 required: false,
                             },
                         ],

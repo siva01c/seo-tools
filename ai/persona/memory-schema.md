@@ -15,7 +15,7 @@ memory/
 Each long-term memory entry regarding a crawled website or client goal must contain:
 
 - `id`: UUID (String)
-- `domain`: Target website domain name (e.g., `ludekkvapil.cz`)
+- `domain`: Target website domain name (e.g., `example.com`)
 - `type`: Category of entry (`domain_target`, `crawl_stats`, `technical_exception`, `historical_fix`)
 - `source`: Triggering crawl ID, user input, or system action
 - `text`: Detailed textual observation or requirement (e.g., "Target keywords: Drupal development, SEO services")

@@ -211,7 +211,15 @@ setInterval(
 // runs as a separate child process that resolves DNS fresh, seconds to minutes later), so it
 // must not be treated as the only gate. See ssrfGuard.ts's module comment for the full rationale.
 
-const DENIED_HOSTS = new Set(['localhost', 'seo.mcpserver.cz', 'seo.local']);
+// localhost always; add your own deployment's hostnames via SEO_DENIED_HOSTS so a public crawl
+// cannot be pointed back at the service itself.
+const DENIED_HOSTS = new Set([
+    'localhost',
+    ...(process.env.SEO_DENIED_HOSTS ?? '')
+        .split(',')
+        .map(host => host.trim().toLowerCase())
+        .filter(Boolean),
+]);
 
 /** Returns an error message if the URL must not be crawled, or null if it is allowed. */
 function validateCrawlTarget(rawUrl: string): Promise<string | null> {
@@ -820,7 +828,7 @@ export function dispatch(method: string, params: Record<string, unknown>, id: un
                             {
                                 name: 'domain',
                                 description:
-                                    'Volitelná doména pro připojení aktuálních auditních dat (např. ludekkvapil.cz)',
+                                    'Volitelná doména pro připojení aktuálních auditních dat (např. example.com)',
                                 required: false,
                             },
                         ],
