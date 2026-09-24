@@ -633,8 +633,8 @@ The `mcp` service exposes the crawler over HTTP and the Model Context Protocol. 
 without a token, which is the right default for anything listening on a socket:
 
 ```bash
-# generate a token and put it in .env
-echo "SEO_MCP_TOKEN=$(openssl rand -hex 24)" >> .env
+# generate a token and put it in .env (replaces the empty SEO_MCP_TOKEN= line from .env.example)
+sed -i "s/^SEO_MCP_TOKEN=.*/SEO_MCP_TOKEN=$(openssl rand -hex 24)/" .env
 
 docker compose up -d mcp
 curl -s http://127.0.0.1:3001/health          # {"status":"ok","activeJobs":0}
@@ -643,6 +643,12 @@ curl -s http://127.0.0.1:3001/health          # {"status":"ok","activeJobs":0}
 The port is published on `127.0.0.1` only. `clientIp()` trusts `X-Forwarded-For`, so the server must
 be reachable only through a proxy that overwrites that header — otherwise per-IP rate limiting can
 be bypassed by forging it.
+
+Both `mcp` and `app` run as the image's `seobot` user (uid 996). Before either starts, the one-shot
+`storage-init` service creates `./storage` and hands it to that uid, so crawls started through the API
+can write there on a native Linux Docker engine too. Files in `./storage` therefore belong to uid 996
+on the host: readable as usual, but deleting them needs `sudo` (or
+`docker compose run --rm -u 0 app rm -rf /home/seobot/storage/<path>`).
 
 Static frontend files are served from `SEO_FRONTEND_DIR` (default `./storage/frontend`, an empty
 directory — the frontend routes 404 while the API and MCP endpoints work normally). Point it at your
@@ -675,7 +681,7 @@ docker compose run --rm app npm test
 
 # Lint and format
 docker compose run --rm app npm run lint
-docker compose run --rm app npm run format
+docker compose run --rm -u 0 app npm run format   # root: rewrites the bind-mounted sources
 docker compose run --rm app npm run style
 ```
 
@@ -758,7 +764,7 @@ docker compose run --rm app npm run merge-to-jsonl
 docker compose run --rm app npm run build
 docker compose run --rm app npm test
 docker compose run --rm app npm run lint
-docker compose run --rm app npm run format
+docker compose run --rm -u 0 app npm run format   # root: rewrites the bind-mounted sources
 docker compose run --rm app npm run style
 ```
 

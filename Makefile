@@ -27,7 +27,7 @@ lint:
 	$(COMPOSE) run --rm app npm run lint
 
 format:
-	$(COMPOSE) run --rm app npm run format
+	$(COMPOSE) run --rm -u 0 app npm run format
 
 style:
 	$(COMPOSE) run --rm app npm run style
