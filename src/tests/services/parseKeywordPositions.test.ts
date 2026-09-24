@@ -28,7 +28,7 @@ describe('parseKeywordPositions', () => {
     let tmpDir: string;
     let originalCwd: string;
 
-    const writeExport = (lines: string[], fileName = 'lkv-semo-keywords.csv'): void => {
+    const writeExport = (lines: string[], fileName = 'semor-keywords.csv'): void => {
         const dir = path.join(tmpDir, 'storage', 'external_datasources', DOMAIN);
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(path.join(dir, fileName), lines.join('\n'));

@@ -11,3 +11,5 @@ storage
 # Added by Apify CLI
 .venv
 .env
+# Deployment-specific patterns for scripts/check-no-internal-refs.sh (never published)
+.internal-refs

@@ -13,12 +13,19 @@ set -eu
 
 SELF="scripts/check-no-internal-refs.sh"
 
-# Internal container names (<service>-<n>: or known service hostnames), the production VPS IP,
-# the mail relay, and operator mailboxes. Deliberately published contact addresses
-# (info@/privacy@/gdpr@/dpo@/contact@) are excluded — a GDPR data-controller contact belongs
-# in the privacy notice, unlike an internal ops mailbox.
-PATTERN='[a-z0-9][a-z0-9-]*-(assistant|nginx|mcp|gateway)-[0-9]+|(sales-assistant|ragchat|osintbot|seo-tools|mcpserver)[a-z0-9-]*:[0-9]{2,5}|[a-z0-9.-]+@ludekkvapil\.cz|185\.8\.165\.241|mail\.gigaserver\.cz'
-PUBLIC_CONTACTS='(info|privacy|gdpr|dpo|contact)@ludekkvapil\.cz'
+# Built-in: generic Compose container names (<service>-<n>). Deployment-specific patterns —
+# your own service hostnames, server IPs, mail relays, operator mailboxes — go one extended
+# regex per line in .internal-refs (gitignored) or in $INTERNAL_REF_PATTERNS, so the guard can
+# know them without this public file publishing them. Deliberately published contact addresses
+# (info@/privacy@/gdpr@/dpo@/contact@) are excluded: a GDPR data-controller contact belongs in
+# the privacy notice, unlike an internal ops mailbox.
+PATTERN='[a-z0-9][a-z0-9-]*-(assistant|nginx|mcp|gateway)-[0-9]+'
+if [ -f .internal-refs ]; then
+    EXTRA=$(grep -vE '^[[:space:]]*(#|$)' .internal-refs | paste -sd '|' -)
+    [ -n "$EXTRA" ] && PATTERN="$PATTERN|$EXTRA"
+fi
+[ -n "${INTERNAL_REF_PATTERNS:-}" ] && PATTERN="$PATTERN|$INTERNAL_REF_PATTERNS"
+PUBLIC_CONTACTS='(info|privacy|gdpr|dpo|contact)@'
 
 if [ "${1:-}" = "--all" ]; then
     FILES=$(git ls-files)
