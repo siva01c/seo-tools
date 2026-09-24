@@ -1,14 +1,31 @@
 services:
+  # One-shot: hand ./storage to `seobot` (uid 996, inherited from the Apify base image) before
+  # anything else writes to it. ./storage is a bind mount, so the image's own
+  # `chown seobot storage` is hidden behind whatever the host has there — root when Docker
+  # creates the directory, the host user's uid (usually 1000) when you do. Neither is 996, and
+  # the non-root `mcp` service then fails every crawl with EACCES. Docker Desktop masks this by
+  # faking ownership on shared folders; a native Linux engine (a VPS, WSL2) does not.
+  storage-init:
+    image: alpine:3.20
+    user: '0'
+    volumes:
+      - ./storage:/storage
+    command: ['sh', '-c', 'mkdir -p /storage/frontend && chown -R 996:996 /storage']
+
   app:
     build:
       context: .
       dockerfile: Dockerfile
       target: builder
     container_name: metadata-crawler-app
-    # Runs as root so the bind-mounted ./storage (owned by the host user) stays writable
-    # regardless of the host UID. The production image (Dockerfile final stage) runs as the
-    # non-root `seobot` user.
-    user: '0'
+    # Same uid as `mcp`, so directories a CLI crawl creates stay writable for the API. Running this
+    # as root would leave root-owned datasets/<domain>/ behind that `mcp` can no longer extend.
+    # Only commands that rewrite the bind-mounted sources (`npm run format`, `lint:fix`) need
+    # root: `docker compose run --rm -u 0 app npm run format` (the Makefile does this).
+    user: '996'
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     network_mode: 'host'
     env_file:
       - .env
@@ -57,6 +74,9 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: seo-tools-mcp
+    depends_on:
+      storage-init:
+        condition: service_completed_successfully
     env_file:
       - .env
     environment:

@@ -18,6 +18,7 @@ import { UrlIndexService } from './services/urlIndexService.js';
 import { writeCrawlManifest } from './services/crawlManifest.js';
 import { isHomepage } from './utils/urlUtils.js';
 import { normalizeDelayRange } from './utils/delayRange.js';
+import { findBareEqualsFlags } from './utils/cliFlags.js';
 import { categorizeLinks } from './utils/linkUtils.js';
 import { globalUserAgentRotator } from './utils/userAgentRotator.js';
 import {
@@ -75,6 +76,15 @@ const allCrawledUrls = new Set<string>();
 // Parse command line arguments for target URL, single URL mode, and excluded domains
 const args = process.argv.slice(2);
 console.log('🐛 DEBUG: Received args:', args);
+
+// Refuse `--max-requests 15` and friends: the parsers below only match `--name=<value>`, so the
+// space form would be dropped silently — for --max-requests that means an uncapped crawl.
+const bareEqualsFlags = findBareEqualsFlags(args);
+if (bareEqualsFlags.length > 0) {
+    bareEqualsFlags.forEach(message => console.error(`❌ ${message}`));
+    process.exit(1);
+}
+
 const targetUrlIndex = args.findIndex(arg => arg === '--url' || arg === '-u');
 let commandLineTargetUrl =
     targetUrlIndex !== -1 && args[targetUrlIndex + 1] ? args[targetUrlIndex + 1] : null;
