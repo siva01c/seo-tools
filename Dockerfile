@@ -7,6 +7,10 @@ RUN sed -i 's/^myuser:/seobot:/g' /etc/passwd /etc/group \
 
 WORKDIR /home/seobot
 
+# The `app` service runs this stage as seobot (uid 996, see docker-compose.yml), so node_modules/ and
+# dist/ must belong to seobot too — built as root, `npm run build` inside `app` fails with EACCES.
+USER seobot
+
 COPY --chown=seobot package*.json ./
 COPY --chown=seobot tsconfig*.json ./
 
