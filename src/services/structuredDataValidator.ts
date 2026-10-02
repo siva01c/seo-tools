@@ -113,9 +113,10 @@ class BlockCheck {
     }
 
     /** A top-level value of the block: an item, or an array of items. */
-    public checkRoot(value: unknown, path: string): void {
+    public checkRoot(value: unknown, path: string, depth = 0): void {
         if (Array.isArray(value)) {
-            value.forEach((entry, i) => this.checkRoot(entry, `${path}[${i}]`));
+            if (depth >= MAX_DEPTH) return;
+            value.forEach((entry, i) => this.checkRoot(entry, `${path}[${i}]`, depth + 1));
             return;
         }
         if (!isObject(value)) {
@@ -171,7 +172,9 @@ class BlockCheck {
 
     private checkNested(value: unknown, path: string, depth: number): void {
         if (Array.isArray(value)) {
-            value.forEach((entry, i) => this.checkNested(entry, `${path}[${i}]`, depth));
+            // Arrays count as a level too: `[[[…]]]` would otherwise recurse as deep as the text is long.
+            if (depth >= MAX_DEPTH) return;
+            value.forEach((entry, i) => this.checkNested(entry, `${path}[${i}]`, depth + 1));
         } else if (isObject(value)) {
             this.checkItem(value, path, depth);
         }

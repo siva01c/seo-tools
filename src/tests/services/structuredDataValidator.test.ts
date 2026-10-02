@@ -212,4 +212,14 @@ describe('structuredDataValidator', () => {
         expect(block.valid_json).toBe(true);
         expect(block.issues).toEqual([]);
     });
+
+    it('survives arrays nested far deeper than the stack allows', () => {
+        const depth = 50000;
+        const root = '['.repeat(depth) + ']'.repeat(depth);
+        const property = `{"@context":"https://schema.org","@type":"Person","name":"N","knows":${root}}`;
+
+        const report = validateJsonLdBlocks([root, property]);
+
+        expect(report.blocks.map(b => b.valid_json)).toEqual([true, true]);
+    });
 });
