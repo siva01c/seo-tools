@@ -104,6 +104,10 @@ one Playwright route handler:
   is a path around the route handler.
 - Responses that are not `text/*` or XHTML are refused, so the tool cannot be used to pull
   arbitrary files.
+- A main document larger than `SEO_FETCH_PAGE_MAX_BYTES` is refused instead of being rendered. The
+  declared `Content-Length` is checked first, then the actual size. Playwright's `route.fetch()`
+  has downloaded the body by then and offers no way to cut it off mid-stream, so the download
+  itself is bounded by the call's timeout, not by this limit.
 
 `robots.txt` is always enforced (no `ignore_robots`), there are no credentials arguments, and load
 is bounded per target host (`SEO_FETCH_PAGE_RATE_LIMIT`), in parallelism
@@ -121,6 +125,23 @@ connection) applies here too, per request. The `robots.txt` request itself is ma
 `robotsService.ts` with plain `fetch()`, which follows redirects without re-checking them — as it
 does for crawls; the response is only parsed for rules and never returned to the caller.
 
+### `check_url` and `validate_structured_data`
+
+Both load their page through the same engine (`loadPage()` in `pageFetchService.ts`, read by
+`pageCheckService.ts`), so everything above holds for them, and they share `fetch_page`'s per-host
+rate limit and concurrency budget — three tools do not triple what one host or this server can be
+made to do. Neither writes to disk or calls an LLM.
+
+What they return is narrower than page text but just as untrusted: a title, a meta description and
+headings are written by the page's author. Each value is length-capped and every result carries
+the same `notice`. `validate_structured_data` echoes only type and property names from the checked
+document (cut at 100 characters, at most 50 blocks and 50 issues per block), never property values.
+With `json_ld` passed as text it makes no request at all; the input is bounded by the MCP request
+body cap, and `@context` URLs are compared as strings, never fetched.
+
+Set `SEO_FETCH_PAGE_USER_AGENT` on a deployment that serves callers you do not know, so that the
+sites being read can identify the bot and reach its operator.
+
 ## Related environment variables
 
 | Variable                          | Default           | Purpose                                                     |
@@ -133,9 +154,11 @@ does for crawls; the response is only parsed for rules and never returned to the
 | `SEO_PUBLIC_CRAWL_MAX_REQUESTS`   | `50`              | Page cap for unauthenticated `/api/crawl` requests          |
 | `SEO_CRAWL_TIMEOUT_MS`            | `900000` (15 min) | Wall-clock kill switch per crawl child process              |
 | `SEO_CORS_ORIGINS`                | (empty)           | Allowed cross-origin callers; empty = same-origin only      |
-| `SEO_FETCH_PAGE_RATE_LIMIT`       | `60`              | `fetch_page` calls per target host per hour                 |
-| `SEO_MAX_CONCURRENT_PAGE_FETCHES` | `2`               | `fetch_page` calls (one Chromium each) running at once      |
-| `SEO_FETCH_PAGE_TIMEOUT_MS`       | `30000` (30 s)    | Wall-clock budget of one `fetch_page` call                  |
+| `SEO_FETCH_PAGE_RATE_LIMIT`       | `60`              | Single-page tool calls per target host per hour             |
+| `SEO_MAX_CONCURRENT_PAGE_FETCHES` | `2`               | Single-page tool calls (one Chromium each) running at once  |
+| `SEO_FETCH_PAGE_TIMEOUT_MS`       | `30000` (30 s)    | Wall-clock budget of one single-page tool call              |
+| `SEO_FETCH_PAGE_MAX_BYTES`        | `5242880` (5 MB)  | Largest main document a single-page tool renders            |
+| `SEO_FETCH_PAGE_USER_AGENT`       | (browser's own)   | User-Agent of the single-page tools, e.g. bot name + contact |
 
 ## Public endpoint hardening (A2)
 

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import * as http from 'http';
 import type { AddressInfo } from 'net';
+import { checkUrl, validatePageStructuredData } from '../../services/pageCheckService.js';
 import { PageFetchRefusedError, fetchPage } from '../../services/pageFetchService.js';
 
 // Opt-in, like the PDF render test: this launches a real Chromium against a local HTTP server,
@@ -27,6 +28,29 @@ window.addEventListener('load', () => {
         const data = await (await fetch('/data.json')).json();
         document.getElementById('app').innerHTML = '<main><h1>' + data.heading + '</h1><p>' +
             data.body + '</p></main>';
+    }, 300);
+});
+</script></body></html>`;
+
+const SEO_PAGE = `<!DOCTYPE html><html><head><title>SEO page</title>
+<meta name="description" content="A described page.">
+<meta name="ROBOTS" content="noindex">
+<link rel="canonical" href="https://example.com/seo">
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization"}</script>
+</head><body><h1>Main heading</h1><h2>Section</h2></body></html>`;
+
+// Adds its structured data after the load event, the way a tag manager does.
+const SEO_INJECTED = `<!DOCTYPE html><html><head><title>Injected</title></head><body>
+<script>
+window.addEventListener('load', () => {
+    setTimeout(async () => {
+        await fetch('/data.json');
+        const script = document.createElement('script');
+        script.type = 'application/ld+json';
+        script.textContent = JSON.stringify({
+            '@context': 'https://schema.org', '@type': 'WebSite', name: 'Site', url: '/',
+        });
+        document.head.appendChild(script);
     }, 300);
 });
 </script></body></html>`;
@@ -69,6 +93,11 @@ maybeDescribe('pageFetchService (real Chromium)', () => {
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 return res.end(JSON.stringify({ heading: 'Rendered heading', body: FILLER }));
             }
+            if (path === '/seo') {
+                res.writeHead(200, { 'Content-Type': 'text/html', 'X-Robots-Tag': 'noarchive' });
+                return res.end(SEO_PAGE);
+            }
+            if (path === '/seo-injected') return html(SEO_INJECTED);
             if (path === '/with-internal-script') {
                 return html(`<html><body><main><p>${FILLER}${FILLER}</p></main>
                     <script src="/internal/script.js"></script></body></html>`);
@@ -140,6 +169,32 @@ maybeDescribe('pageFetchService (real Chromium)', () => {
 
         expect(result.text).toContain('Lorem ipsum');
         expect(hits).not.toContain('/internal/script.js');
+    }, 120000);
+
+    it('reads the SEO basics of a page through real locators', async () => {
+        const result = await checkUrl({ url: `${base}/seo` }, deps);
+
+        expect(result.status).toBe(200);
+        expect(result.title).toBe('SEO page');
+        expect(result.meta_description).toBe('A described page.');
+        expect(result.meta_robots).toBe('noindex');
+        expect(result.x_robots_tag).toBe('noarchive');
+        expect(result.canonical).toBe('https://example.com/seo');
+        expect(result.headings).toEqual({ h1: ['Main heading'], h2: ['Section'], h3: [] });
+    }, 120000);
+
+    it('validates the JSON-LD blocks of a page, also when added by script', async () => {
+        const onLoad = await validatePageStructuredData({ url: `${base}/seo` }, deps);
+        expect(onLoad.block_count).toBe(1);
+        expect(onLoad.blocks[0].types).toEqual(['Organization']);
+        expect(onLoad.blocks[0].issues.map(issue => issue.message)).toEqual([
+            'Organization is missing required property: name',
+        ]);
+
+        const target = { url: `${base}/seo-injected`, waitFor: 'networkidle' as const };
+        const injected = await validatePageStructuredData(target, deps);
+        expect(injected.block_count).toBe(1);
+        expect(injected.blocks[0]).toMatchObject({ valid_json: true, types: ['WebSite'] });
     }, 120000);
 
     it('returns an error page with its status', async () => {
