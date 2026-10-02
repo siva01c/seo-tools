@@ -83,18 +83,59 @@ subsequent resolution inside `page.goto()` is not zero — full elimination woul
 resolved IP for Chromium's actual connection (e.g. via a proxy), which Crawlee/Playwright doesn't
 support out of the box. Revisit if this becomes a real target for abuse.
 
+## `fetch_page`: returning third-party page text
+
+The MCP tool `fetch_page` (`src/services/pageFetchService.ts`) loads one page in Chromium and hands
+its text back to the caller — typically an LLM agent. It is only reachable through the
+authenticated `/mcp/post` endpoint. Two things make it different from a crawl:
+
+**The page's content reaches the caller**, so an SSRF hit would no longer be blind. The guards
+therefore cover every request the page makes, not just the URL in the call. All requests go through
+one Playwright route handler:
+
+- The main document is fetched with redirects disabled. A 3xx is never followed by the browser; its
+  target goes through `validateCrawlTarget()` and `robots.txt` like a fresh URL and is then
+  navigated to explicitly (at most 5 hops). Playwright does not re-run a route handler for the
+  later hops of a redirect chain, so a check on the first URL alone would not see where the chain
+  ends.
+- Subresources (scripts, XHR — needed for JavaScript-rendered pages) get the same address check on
+  every hop of their own redirects. Images, media and fonts are not loaded.
+- Sub-frames, service workers and WebSockets are blocked: none adds to the extracted text and each
+  is a path around the route handler.
+- Responses that are not `text/*` or XHTML are refused, so the tool cannot be used to pull
+  arbitrary files.
+
+`robots.txt` is always enforced (no `ignore_robots`), there are no credentials arguments, and load
+is bounded per target host (`SEO_FETCH_PAGE_RATE_LIMIT`), in parallelism
+(`SEO_MAX_CONCURRENT_PAGE_FETCHES`) and in time (`SEO_FETCH_PAGE_TIMEOUT_MS`).
+
+**The returned text is untrusted input to whoever reads it.** A page can carry text written to
+steer an LLM ("ignore previous instructions…"). The tool cannot make that safe; it limits the
+surface and labels the data: only visible text of the main content element is returned (text hidden
+by CSS is dropped), the length is capped (`max_chars`), the tool description and a `notice` field
+in every result state that the content is data, not instructions. Deciding which sites an agent may
+read, and what it may do after reading one, is the job of whatever sits in front of this server.
+
+**Not eliminated:** the DNS-rebinding window described above (between the check and the actual
+connection) applies here too, per request. The `robots.txt` request itself is made by
+`robotsService.ts` with plain `fetch()`, which follows redirects without re-checking them — as it
+does for crawls; the response is only parsed for rules and never returned to the caller.
+
 ## Related environment variables
 
-| Variable                        | Default           | Purpose                                                     |
-| ------------------------------- | ----------------- | ----------------------------------------------------------- |
-| `SEO_MCP_TOKEN`                 | (unset)           | Shared secret for Basic/Bearer auth; required in production |
-| `SEO_MAX_CONCURRENT_CRAWLS`     | `2`               | Max crawls running at once across all callers               |
-| `SEO_CRAWL_RATE_LIMIT`          | `5`               | Unauthenticated crawl starts per IP per hour                |
-| `SEO_CRAWL_READ_RATE_LIMIT`     | `120`             | Unauthenticated status/report reads per IP per hour         |
-| `SEO_EMAIL_RATE_LIMIT`          | `5`               | Report emails sent to a given address per day               |
-| `SEO_PUBLIC_CRAWL_MAX_REQUESTS` | `50`              | Page cap for unauthenticated `/api/crawl` requests          |
-| `SEO_CRAWL_TIMEOUT_MS`          | `900000` (15 min) | Wall-clock kill switch per crawl child process              |
-| `SEO_CORS_ORIGINS`              | (empty)           | Allowed cross-origin callers; empty = same-origin only      |
+| Variable                          | Default           | Purpose                                                     |
+| --------------------------------- | ----------------- | ----------------------------------------------------------- |
+| `SEO_MCP_TOKEN`                   | (unset)           | Shared secret for Basic/Bearer auth; required in production |
+| `SEO_MAX_CONCURRENT_CRAWLS`       | `2`               | Max crawls running at once across all callers               |
+| `SEO_CRAWL_RATE_LIMIT`            | `5`               | Unauthenticated crawl starts per IP per hour                |
+| `SEO_CRAWL_READ_RATE_LIMIT`       | `120`             | Unauthenticated status/report reads per IP per hour         |
+| `SEO_EMAIL_RATE_LIMIT`            | `5`               | Report emails sent to a given address per day               |
+| `SEO_PUBLIC_CRAWL_MAX_REQUESTS`   | `50`              | Page cap for unauthenticated `/api/crawl` requests          |
+| `SEO_CRAWL_TIMEOUT_MS`            | `900000` (15 min) | Wall-clock kill switch per crawl child process              |
+| `SEO_CORS_ORIGINS`                | (empty)           | Allowed cross-origin callers; empty = same-origin only      |
+| `SEO_FETCH_PAGE_RATE_LIMIT`       | `60`              | `fetch_page` calls per target host per hour                 |
+| `SEO_MAX_CONCURRENT_PAGE_FETCHES` | `2`               | `fetch_page` calls (one Chromium each) running at once      |
+| `SEO_FETCH_PAGE_TIMEOUT_MS`       | `30000` (30 s)    | Wall-clock budget of one `fetch_page` call                  |
 
 ## Public endpoint hardening (A2)
 

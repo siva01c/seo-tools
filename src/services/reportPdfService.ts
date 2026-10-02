@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { chromium } from 'playwright';
 import { Marked, type Tokens } from 'marked';
+import { withTimeout } from '../utils/withTimeout.js';
 
 /**
  * Renders a generated SEO audit Markdown report into a print-ready PDF.
@@ -264,20 +265,6 @@ function footerTemplate(labels: ILabels, domain?: string): string {
         `${left}${escapeHtml(labels.page)} <span class="pageNumber"></span> ` +
         `${escapeHtml(labels.of)} <span class="totalPages"></span></div>`
     );
-}
-
-async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-        return await Promise.race([
-            work,
-            new Promise<never>((_resolve, reject) => {
-                timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-            }),
-        ]);
-    } finally {
-        if (timer) clearTimeout(timer);
-    }
 }
 
 /**
