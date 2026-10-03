@@ -136,3 +136,94 @@ describe('MCP Server Integration Tests - fetch_page', () => {
         expect(errors[60]).toBe('Too many page fetches for 10.255.255.1, try again later');
     });
 });
+
+// As above: only what is decided before a browser would be started.
+describe('MCP Server Integration Tests - check_url and validate_structured_data', () => {
+    const call = async (name: string, args: Record<string, unknown>) => {
+        const response: any = await dispatch('tools/call', { name, arguments: args }, 11);
+        expect(response.id).toBe(11);
+        return JSON.parse(response.result.content[0].text);
+    };
+
+    it('lists both tools in tools/list', async () => {
+        const response: any = await dispatch('tools/list', {}, 10);
+        const byName = (name: string) => response.result.tools.find((t: any) => t.name === name);
+
+        const checkUrl = byName('check_url');
+        expect(checkUrl.inputSchema.required).toEqual(['url']);
+        expect(Object.keys(checkUrl.inputSchema.properties)).toEqual(['url', 'wait_for']);
+        expect(checkUrl.inputSchema.additionalProperties).toBe(false);
+        expect(checkUrl.description).toMatch(/untrusted/i);
+
+        const validate = byName('validate_structured_data');
+        expect(Object.keys(validate.inputSchema.properties)).toEqual([
+            'url',
+            'json_ld',
+            'wait_for',
+        ]);
+        expect(validate.inputSchema.required).toBeUndefined();
+        expect(validate.inputSchema.additionalProperties).toBe(false);
+    });
+
+    it('check_url validates its arguments and refuses private addresses', async () => {
+        expect(await call('check_url', {})).toEqual({ error: 'url is required' });
+        expect(await call('check_url', { url: 'not a url' })).toEqual({ error: 'Invalid URL' });
+        const badWait = await call('check_url', { url: 'https://example.com/', wait_for: 'x' });
+        expect(badWait.error).toBe('wait_for must be one of: load, networkidle');
+
+        const loopback = await call('check_url', { url: 'http://127.0.0.2/' });
+        expect(loopback.error).toBe('Target resolves to a private address');
+        const file = await call('check_url', { url: 'file:///etc/passwd' });
+        expect(file.error).toBe('Only http(s) URLs are allowed');
+    });
+
+    it('validate_structured_data validates JSON-LD given as text without a request', async () => {
+        const jsonLd = JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'Event',
+            name: 'Meetup',
+        });
+
+        const result = await call('validate_structured_data', { json_ld: jsonLd });
+
+        expect(result.page).toBeUndefined();
+        expect(result.block_count).toBe(1);
+        expect(result.blocks[0].types).toEqual(['Event']);
+        expect(result.blocks[0].issues.map((issue: any) => issue.message)).toEqual([
+            'Event is missing required property: startDate',
+            'Event is missing required property: location',
+        ]);
+
+        const broken = await call('validate_structured_data', { json_ld: '{ "@type": ' });
+        expect(broken.blocks[0].valid_json).toBe(false);
+    });
+
+    it('validate_structured_data needs exactly one of url and json_ld', async () => {
+        const none = await call('validate_structured_data', {});
+        expect(none.error).toBe('url or json_ld is required');
+        const both = await call('validate_structured_data', {
+            url: 'https://example.com/',
+            json_ld: '{}',
+        });
+        expect(both.error).toBe('Pass either url or json_ld, not both');
+        for (const jsonLd of ['', '   ', 42, {}]) {
+            const bad = await call('validate_structured_data', { json_ld: jsonLd });
+            expect(bad.error).toBe('json_ld must be a non-empty string');
+        }
+
+        const internal = await call('validate_structured_data', { url: 'http://10.9.8.7/' });
+        expect(internal.error).toBe('Target resolves to a private address');
+    });
+
+    it('shares the per-host limit with fetch_page', async () => {
+        const url = 'http://10.255.255.2/';
+        const tools = ['fetch_page', 'check_url', 'validate_structured_data'];
+        const errors: string[] = [];
+        for (let i = 0; i < 61; i++) {
+            errors.push((await call(tools[i % tools.length], { url })).error);
+        }
+
+        expect(errors[59]).toBe('Target resolves to a private address');
+        expect(errors[60]).toBe('Too many page fetches for 10.255.255.2, try again later');
+    });
+});
