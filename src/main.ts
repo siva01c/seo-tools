@@ -19,7 +19,7 @@ import { writeCrawlManifest } from './services/crawlManifest.js';
 import { isHomepage } from './utils/urlUtils.js';
 import { normalizeDelayRange } from './utils/delayRange.js';
 import { findBareEqualsFlags } from './utils/cliFlags.js';
-import { categorizeLinks } from './utils/linkUtils.js';
+import { categorizeLinks, isSameOrSubdomain } from './utils/linkUtils.js';
 import { globalUserAgentRotator } from './utils/userAgentRotator.js';
 import {
     extractGoogleMetaTags,
@@ -1283,17 +1283,7 @@ const requestHandler = async ({
 
                     // Check if domain is excluded
                     const isDomainExcluded = config.targets.excludedDomains.some(excludedDomain => {
-                        // Exact hostname match (with and without www)
-                        const normalizeHostname = (hostname: string): string =>
-                            hostname.replace(/^www\./, '');
-                        const normalizedHostname = normalizeHostname(hostname);
-                        const normalizedExcludedDomain = normalizeHostname(excludedDomain);
-
-                        const matches =
-                            hostname === excludedDomain ||
-                            normalizedHostname === normalizedExcludedDomain ||
-                            hostname.endsWith('.' + excludedDomain) ||
-                            excludedDomain.endsWith('.' + hostname);
+                        const matches = isSameOrSubdomain(hostname, excludedDomain);
 
                         if (matches) {
                             console.log(
@@ -1322,19 +1312,10 @@ const requestHandler = async ({
                     );
 
                     const isDomainAllowed = allowedDomains.some(allowedDomain => {
-                        const normalizeHostname = (hostname: string): string =>
-                            hostname.replace(/^www\./, '');
-                        const normalizedHostname = normalizeHostname(hostname);
-                        const normalizedAllowedDomain = normalizeHostname(allowedDomain);
-
-                        const matches =
-                            normalizedHostname === normalizedAllowedDomain ||
-                            hostname === allowedDomain ||
-                            normalizedHostname.endsWith('.' + normalizedAllowedDomain) ||
-                            normalizedAllowedDomain.endsWith('.' + normalizedHostname);
+                        const matches = isSameOrSubdomain(hostname, allowedDomain);
 
                         console.log(
-                            `🔍 DEBUG: Testing ${hostname} vs ${allowedDomain} - normalized: ${normalizedHostname} vs ${normalizedAllowedDomain} - matches: ${matches}`
+                            `🔍 DEBUG: Testing ${hostname} vs ${allowedDomain} - matches: ${matches}`
                         );
 
                         return matches;
@@ -1575,24 +1556,16 @@ const crawler = new PlaywrightCrawler({
             // Only inject Authorization header for requests to the target domain
             if (basicAuthHeader) {
                 try {
-                    const normalizeHostname = (hostname: string): string =>
-                        hostname.replace(/^www\./, '');
                     const requestHostname = new URL(request.url).hostname ?? '';
-                    const normalizedRequestHostname = normalizeHostname(requestHostname);
                     const allowedDomains =
                         config.targets.allowedDomains.length > 0
                             ? config.targets.allowedDomains
                             : [baseDomain];
 
-                    const isTargetDomain = allowedDomains.some(allowedDomain => {
-                        const normalizedAllowedDomain = normalizeHostname(allowedDomain);
-                        return (
-                            requestHostname === allowedDomain ||
-                            normalizedRequestHostname === normalizedAllowedDomain ||
-                            requestHostname.endsWith('.' + allowedDomain) ||
-                            allowedDomain.endsWith('.' + requestHostname)
-                        );
-                    });
+                    // Only downwards: credentials for a subdomain never go to its parent domain.
+                    const isTargetDomain = allowedDomains.some(allowedDomain =>
+                        isSameOrSubdomain(requestHostname, allowedDomain)
+                    );
 
                     if (isTargetDomain) {
                         headers.Authorization = basicAuthHeader;

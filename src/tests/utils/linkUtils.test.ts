@@ -1,7 +1,23 @@
 import { describe, it, expect } from '@jest/globals';
-import { categorizeLinks } from '../../utils/linkUtils.js';
+import { categorizeLinks, isSameOrSubdomain } from '../../utils/linkUtils.js';
 
 describe('LinkUtils', () => {
+    describe('isSameOrSubdomain', () => {
+        it.each([
+            ['example.com', 'example.com', true],
+            ['www.example.com', 'example.com', true],
+            ['example.com', 'www.example.com', true],
+            ['courses.example.com', 'example.com', true],
+            ['a.courses.example.com', 'courses.example.com', true],
+            ['EXAMPLE.com', 'example.COM', true],
+            ['example.com', 'courses.example.com', false],
+            ['notexample.com', 'example.com', false],
+            ['example.com', '', false],
+        ])('%s within %s -> %s', (hostname, domain, expected) => {
+            expect(isSameOrSubdomain(hostname, domain)).toBe(expected);
+        });
+    });
+
     describe('categorizeLinks', () => {
         const baseDomain = 'example.com';
 

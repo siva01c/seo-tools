@@ -7,6 +7,21 @@ export interface ILinkData {
     isInternal: boolean;
 }
 
+const normalizeHostname = (hostname: string): string =>
+    hostname.toLowerCase().replace(/^www\./, '');
+
+/**
+ * True when `hostname` is `domain` itself or one of its subdomains (a leading "www." is
+ * ignored on both sides). The check only ever runs downwards: excluding or allowing
+ * `courses.example.com` never matches its parent `example.com`.
+ */
+export const isSameOrSubdomain = (hostname: string, domain: string): boolean => {
+    const host = normalizeHostname(hostname);
+    const target = normalizeHostname(domain);
+    if (!host || !target) return false;
+    return host === target || host.endsWith('.' + target);
+};
+
 export const categorizeLinks = (
     links: Array<{
         text: string;
@@ -42,21 +57,12 @@ export const categorizeLinks = (
     links.forEach(link => {
         try {
             const url = new URL(link.href);
-            // Normalize domains by removing 'www.' prefix for comparison
-            const normalizeHostname = (hostname: string): string => hostname.replace(/^www\./, '');
             const normalizedLinkDomain = normalizeHostname(url.hostname);
             const normalizedBaseDomain = normalizeHostname(baseDomain);
 
-            // Check if domain is excluded
-            const isDomainExcluded = excludedDomains.some(excludedDomain => {
-                const normalizedExcludedDomain = normalizeHostname(excludedDomain);
-                return (
-                    url.hostname === excludedDomain ||
-                    normalizedLinkDomain === normalizedExcludedDomain ||
-                    url.hostname.endsWith('.' + excludedDomain) ||
-                    excludedDomain.endsWith('.' + url.hostname)
-                );
-            });
+            const isDomainExcluded = excludedDomains.some(excludedDomain =>
+                isSameOrSubdomain(url.hostname, excludedDomain)
+            );
 
             // Check if path is excluded
             const isPathExcluded = excludedPaths.some(excludedPath => {
@@ -70,15 +76,9 @@ export const categorizeLinks = (
             // Use allowedDomains if provided, otherwise fall back to baseDomain logic
             const domainsToCheck = allowedDomains.length > 0 ? allowedDomains : [baseDomain];
 
-            const isDomainAllowed = domainsToCheck.some(allowedDomain => {
-                const normalizedAllowedDomain = normalizeHostname(allowedDomain);
-                return (
-                    normalizedLinkDomain === normalizedAllowedDomain ||
-                    url.hostname === allowedDomain ||
-                    normalizedLinkDomain.endsWith('.' + normalizedAllowedDomain) ||
-                    normalizedAllowedDomain.endsWith('.' + normalizedLinkDomain)
-                );
-            });
+            const isDomainAllowed = domainsToCheck.some(allowedDomain =>
+                isSameOrSubdomain(url.hostname, allowedDomain)
+            );
 
             const isInternal = !isExcluded && isDomainAllowed;
 

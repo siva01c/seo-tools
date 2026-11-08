@@ -23,6 +23,7 @@ import {
     TITLE_MAX_PIXEL_WIDTH,
     META_DESCRIPTION_MAX_PIXEL_WIDTH,
 } from '../src/services/issueChecksService.js';
+import { findOrphanedPages } from '../src/services/orphanedPagesService.js';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -170,9 +171,6 @@ function extractJsonLdTypes(node: any): string[] {
     }
     return types;
 }
-
-/** Normalize a URL for orphan comparison (strip trailing slash). */
-const normalizeUrl = (u: string): string => u.replace(/\/$/, '');
 
 // ── Load pages ───────────────────────────────────────────────────────────────
 
@@ -469,48 +467,17 @@ if (csvFlag) {
 
 console.log('📝 Report 4: Orphaned pages');
 
-type OrphanEntry = { url: string; title?: string; timestamp?: string };
+const { pages: orphanedPages, orphanedHomepages } = findOrphanedPages(allPages);
 
-// Build set of all internal link targets across all pages
-const linkedUrls = new Set<string>();
-for (const page of allPages) {
-    for (const link of page.links?.internal ?? []) {
-        if (link.href) linkedUrls.add(normalizeUrl(link.href));
-    }
+if (orphanedHomepages.length > 0) {
+    console.warn(mi.warnOrphanedHomepage(orphanedHomepages));
 }
-
-// Detect root URLs (homepages) to exclude
-const rootUrls = new Set<string>();
-for (const _domain of domainsToProcess) {
-    // Any page whose path is just "/" or "" is a homepage
-    try {
-        const parsed = new URL(
-            allPages.find(p => {
-                try {
-                    return new URL(p.url).pathname === '/';
-                } catch {
-                    return false;
-                }
-            })?.url ?? ''
-        );
-        rootUrls.add(normalizeUrl(parsed.origin + '/'));
-        rootUrls.add(normalizeUrl(parsed.origin));
-    } catch {
-        /* ignore */
-    }
-}
-
-const orphanedPages: OrphanEntry[] = allPages
-    .filter(page => {
-        const norm = normalizeUrl(page.url);
-        if (rootUrls.has(norm)) return false; // skip homepages
-        return !linkedUrls.has(norm);
-    })
-    .map(page => ({ url: page.url, title: page.title, timestamp: page.timestamp }));
 
 writeJson(`orphaned-pages-${dateStamp}.json`, {
     total: orphanedPages.length,
     pages: orphanedPages,
+    // Non-empty means the crawl most likely lost its internal links (see orphanedPagesService).
+    orphanedHomepages,
 });
 
 if (csvFlag) {
@@ -650,6 +617,7 @@ console.log(`  ${mi.sumMetaDesc}: ${metaDescIssues.length}`);
 console.log(`  ${mi.sumTitle}: ${titleIssues.length}`);
 console.log(`  ${mi.sumH1}: ${h1Issues.length}`);
 console.log(`  ${mi.sumOrphan}: ${orphanedPages.length}`);
+if (orphanedHomepages.length > 0) console.warn(`  ${mi.warnOrphanedHomepage(orphanedHomepages)}`);
 console.log(`  ${mi.sumJsonLd}: ${jsonLdIssues.length}`);
 console.log(`  ${mi.sumOgComplete}: ${ogIssues.length}`);
 console.log(`  ${mi.sumTwitterCard}: ${twitterCardIssues.length}`);
