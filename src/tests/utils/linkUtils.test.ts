@@ -1,7 +1,23 @@
 import { describe, it, expect } from '@jest/globals';
-import { categorizeLinks } from '../../utils/linkUtils.js';
+import { categorizeLinks, isSameOrSubdomain } from '../../utils/linkUtils.js';
 
 describe('LinkUtils', () => {
+    describe('isSameOrSubdomain', () => {
+        it.each([
+            ['example.com', 'example.com', true],
+            ['www.example.com', 'example.com', true],
+            ['example.com', 'www.example.com', true],
+            ['courses.example.com', 'example.com', true],
+            ['a.courses.example.com', 'courses.example.com', true],
+            ['EXAMPLE.com', 'example.COM', true],
+            ['example.com', 'courses.example.com', false],
+            ['notexample.com', 'example.com', false],
+            ['example.com', '', false],
+        ])('%s within %s -> %s', (hostname, domain, expected) => {
+            expect(isSameOrSubdomain(hostname, domain)).toBe(expected);
+        });
+    });
+
     describe('categorizeLinks', () => {
         const baseDomain = 'example.com';
 
@@ -73,6 +89,46 @@ describe('LinkUtils', () => {
             // Based on the implementation, subdomains of example.com should be treated as internal
             expect(result.internal).toHaveLength(3); // blog.example.com, api.example.com, example.com
             expect(result.external).toHaveLength(1); // different.com
+        });
+
+        it('excluding a subdomain keeps links of its parent domain internal', () => {
+            const links = [
+                { href: 'https://example.com/', text: 'Home' },
+                { href: 'https://www.example.com/about', text: 'About (www)' },
+                { href: 'https://courses.example.com/lesson', text: 'Excluded subdomain' },
+                { href: 'https://a.courses.example.com/x', text: 'Below excluded subdomain' },
+            ];
+
+            const result = categorizeLinks(links, baseDomain, ['courses.example.com']);
+
+            expect(result.internal.map(l => l.href)).toEqual([
+                'https://example.com/',
+                'https://www.example.com/about',
+            ]);
+            expect(result.external.map(l => l.href)).toEqual([
+                'https://courses.example.com/lesson',
+                'https://a.courses.example.com/x',
+            ]);
+        });
+
+        it('does not treat a parent domain as allowed when crawling a subdomain', () => {
+            const links = [
+                { href: 'https://blog.example.com/post', text: 'Same subdomain' },
+                { href: 'https://example.com/', text: 'Parent domain' },
+            ];
+
+            const result = categorizeLinks(links, 'blog.example.com');
+
+            expect(result.internal.map(l => l.href)).toEqual(['https://blog.example.com/post']);
+            expect(result.external.map(l => l.href)).toEqual(['https://example.com/']);
+        });
+
+        it('does not match a domain that only shares a suffix without a dot boundary', () => {
+            const links = [{ href: 'https://notexample.com/page', text: 'Lookalike' }];
+
+            const result = categorizeLinks(links, baseDomain);
+
+            expect(result.external).toHaveLength(1);
         });
 
         it('should handle protocol differences correctly', () => {

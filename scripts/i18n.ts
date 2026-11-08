@@ -327,6 +327,7 @@ export interface ISeoIssuesMessages {
     sumTitle: string;
     sumH1: string;
     sumOrphan: string;
+    warnOrphanedHomepage: (urls: string[]) => string;
     sumJsonLd: string;
     sumOgComplete: string;
     sumTwitterCard: string;
@@ -662,6 +663,8 @@ const en: IMessages = {
         sumTitle: 'Title issues',
         sumH1: 'H1 issues',
         sumOrphan: 'Orphaned pages',
+        warnOrphanedHomepage: urls =>
+            `⚠️  No internal link points to the homepage (${urls.join(', ')}). That is almost certainly a crawl problem (e.g. --exclude-domains or --exclude-paths dropping internal links), not the site: check the crawl before acting on the orphaned pages.`,
         sumJsonLd: 'JSON-LD issues',
         sumOgComplete: 'Open Graph incomplete',
         sumTwitterCard: 'Twitter Card missing',
@@ -1017,6 +1020,8 @@ const cs: IMessages = {
         sumTitle: 'Problémy s titulkem',
         sumH1: 'Problémy s H1',
         sumOrphan: 'Osamocené stránky',
+        warnOrphanedHomepage: urls =>
+            `⚠️  Na homepage (${urls.join(', ')}) nevede žádný interní odkaz. To je skoro jistě chyba crawlu (např. --exclude-domains nebo --exclude-paths vyřadily interní odkazy), ne webu: než začnete řešit osamocené stránky, zkontrolujte crawl.`,
         sumJsonLd: 'Problémy s JSON-LD',
         sumOgComplete: 'Neúplné Open Graph značky',
         sumTwitterCard: 'Chybějící Twitter Card',
