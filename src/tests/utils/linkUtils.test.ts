@@ -75,6 +75,46 @@ describe('LinkUtils', () => {
             expect(result.external).toHaveLength(1); // different.com
         });
 
+        it('excluding a subdomain keeps links of its parent domain internal', () => {
+            const links = [
+                { href: 'https://example.com/', text: 'Home' },
+                { href: 'https://www.example.com/about', text: 'About (www)' },
+                { href: 'https://courses.example.com/lesson', text: 'Excluded subdomain' },
+                { href: 'https://a.courses.example.com/x', text: 'Below excluded subdomain' },
+            ];
+
+            const result = categorizeLinks(links, baseDomain, ['courses.example.com']);
+
+            expect(result.internal.map(l => l.href)).toEqual([
+                'https://example.com/',
+                'https://www.example.com/about',
+            ]);
+            expect(result.external.map(l => l.href)).toEqual([
+                'https://courses.example.com/lesson',
+                'https://a.courses.example.com/x',
+            ]);
+        });
+
+        it('does not treat a parent domain as allowed when crawling a subdomain', () => {
+            const links = [
+                { href: 'https://blog.example.com/post', text: 'Same subdomain' },
+                { href: 'https://example.com/', text: 'Parent domain' },
+            ];
+
+            const result = categorizeLinks(links, 'blog.example.com');
+
+            expect(result.internal.map(l => l.href)).toEqual(['https://blog.example.com/post']);
+            expect(result.external.map(l => l.href)).toEqual(['https://example.com/']);
+        });
+
+        it('does not match a domain that only shares a suffix without a dot boundary', () => {
+            const links = [{ href: 'https://notexample.com/page', text: 'Lookalike' }];
+
+            const result = categorizeLinks(links, baseDomain);
+
+            expect(result.external).toHaveLength(1);
+        });
+
         it('should handle protocol differences correctly', () => {
             const links = [
                 { href: 'http://example.com/page', text: 'HTTP Link' },
