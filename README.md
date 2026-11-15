@@ -640,7 +640,8 @@ docker compose up -d mcp
 curl -s http://127.0.0.1:3001/health          # {"status":"ok","activeJobs":0}
 ```
 
-The port is published on `127.0.0.1` only. `clientIp()` trusts `X-Forwarded-For`, so the server must
+The host port is `SEO_MCP_HOST_PORT` from `.env` (default `3001`); use your value in the `curl`
+above if you changed it. The port is published on `127.0.0.1` only. `clientIp()` trusts `X-Forwarded-For`, so the server must
 be reachable only through a proxy that overwrites that header — otherwise per-IP rate limiting can
 be bypassed by forging it.
 
@@ -656,13 +657,32 @@ own build output if you have one.
 
 **Deploying behind a reverse proxy** — an external network, vhost labels, extra mounts and so on —
 is deployment-specific and does not belong in this repository. Supply those with your own compose
-overlay:
+overlay. Put it (or a symlink to it) at `docker-compose.override.yml` next to `docker-compose.yml` —
+the file is gitignored, and plain `docker compose` applies it automatically, so every later
+`docker compose` and `make` command uses the same overlay:
 
 ```bash
-docker compose -f docker-compose.yml -f /path/to/your-deployment.yml up -d mcp
+ln -s /path/to/your-deployment.yml docker-compose.override.yml
+docker compose up -d mcp
 ```
 
 Relative paths inside the overlay resolve against the _base_ file's directory, not the overlay's.
+Avoid passing the overlay with `-f` instead: the container then depends on a path that a later
+redeploy has to repeat exactly.
+
+**Redeploying after a pull.** The `mcp` container keeps running the image it was created from, so
+a change in `src/` — a new tool, a fix — reaches it only after the image is rebuilt and the container
+recreated. `docker compose restart mcp` is not enough. After every pull run:
+
+```bash
+make mcp-deploy   # build the mcp image, recreate the container, then run make mcp-check
+make mcp-check    # only the check: the running server offers exactly the tools in src/mcpTools.ts
+```
+
+`make mcp-check` waits for `/health`, asks the running server for `tools/list` (with
+`SEO_MCP_TOKEN` from `.env`) and fails, naming the tools, when the list differs from the code of
+the checkout — the sign of a stale image. It runs in the `app` service on the host network and
+reaches the server at `127.0.0.1:$SEO_MCP_HOST_PORT`; set `SEO_MCP_URL` to check another address.
 
 ### Running NPM Scripts in Docker
 
@@ -1129,8 +1149,9 @@ other types are not checked. At most 50 blocks, and 50 issues per block, are rep
 
 ### Running the MCP Server
 
-- **Via Docker Compose (Recommended):** The server runs on host port `3001` (mapped to container
-  port `3000` on the `mcp` service).
+- **Via Docker Compose (Recommended):** The server runs on `127.0.0.1:$SEO_MCP_HOST_PORT` (default
+  `3001`), mapped to container port `3000` on the `mcp` service. Redeploy after a pull with
+  `make mcp-deploy`.
 - **Locally:** `bash   npm run mcp   ` Requires setting `SEO_MCP_TOKEN` in `.env` for Basic
   Authorization (if configured). For more details on the persona's role and rules, see
   [docs/SEO-consultant.md](docs/SEO-consultant.md).
