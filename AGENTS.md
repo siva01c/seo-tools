@@ -79,6 +79,11 @@ make format
 # Open shell inside the container
 make shell
 
+# After a pull: rebuild the MCP image, recreate the container, check its tools/list
+make mcp-deploy
+# Only the check: running MCP server serves exactly the tools in src/mcpTools.ts
+make mcp-check
+
 # Compare sitemaps (incremental planning)
 docker compose run --rm app npx tsx scripts/compare-sitemaps.ts \
   --domain example.com --previous-date 12-07-2025
